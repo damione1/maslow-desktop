@@ -5,7 +5,9 @@
   import { wsState, initMachineListeners } from "$lib/stores/machine";
   import { initJobListeners } from "$lib/stores/job";
   import StatusPanel from "$lib/components/StatusPanel.svelte";
+  import JogControls from "$lib/components/JogControls.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
+  import FileBrowser from "$lib/components/FileBrowser.svelte";
   import Console from "$lib/components/Console.svelte";
 
   let host = $state($connection.host);
@@ -46,8 +48,16 @@
   </header>
 
   <main class="content">
-    <StatusPanel />
-    <JobPanel />
+    <div class="cols">
+      <div class="col">
+        <StatusPanel />
+        <JogControls />
+      </div>
+      <div class="col">
+        <JobPanel />
+        <FileBrowser />
+      </div>
+    </div>
     <Console />
   </main>
 </div>
@@ -113,5 +123,22 @@
     gap: 14px;
     padding: 1em;
     overflow: auto;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  @media (max-width: 720px) {
+    .cols {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
