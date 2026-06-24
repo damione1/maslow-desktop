@@ -441,8 +441,16 @@ fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
         return;
     }
     if let Some(state) = maslow::parse_state(line) {
-        let _ = app.emit("maslow-state", state);
+        let _ = app.emit("maslow-state", maslow::policy_for(state));
         return;
+    }
+    if let Some(wp) = maslow::parse_waypoint(line) {
+        let _ = app.emit("maslow-waypoint", wp);
+        return;
+    }
+    if line.contains("Calibration complete") {
+        let _ = app.emit("maslow-cal-complete", ());
+        // fall through so the message also appears in the console
     }
     if is_control(line) {
         let _ = app.emit("ws-control", line.to_string());
