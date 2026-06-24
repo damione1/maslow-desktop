@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
   import { jobProgress } from "$lib/stores/job";
+  import { actionPolicy } from "$lib/stores/maslow";
 
   const STEPS = [0.1, 1, 10, 50];
   let step = $state(10);
@@ -13,8 +14,14 @@
       $jobProgress.state !== "done" &&
       $jobProgress.state !== "error",
   );
-  // Motion commands are pointless (and blocked) while a job streams.
-  const canMove = $derived(connected && !jobActive);
+  // Gating from the unified action policy (FluidNC state + job).
+  const ap = $derived($actionPolicy);
+  const allow = (key: keyof NonNullable<typeof ap>) =>
+    connected && (ap?.[key] ?? false);
+  const canJog = $derived(allow("jog"));
+  const canHome = $derived(allow("home"));
+  const canUnlock = $derived(allow("unlock"));
+  const canZero = $derived(allow("zero"));
 
   function line(cmd: string) {
     invoke("send_line", { line: cmd });
@@ -38,6 +45,7 @@
   const home = () => line("$H");
   const unlock = () => line("$X");
   const zeroAll = () => line("G10 L20 P0 X0 Y0 Z0");
+  const zeroZ = () => line("G10 L20 P0 Z0");
 </script>
 
 <section class="jog">
@@ -48,16 +56,16 @@
 
   <div class="grid">
     <div class="xy">
-      <button class="up" onclick={() => jog("Y", 1)} disabled={!canMove}>Y+</button>
-      <button class="left" onclick={() => jog("X", -1)} disabled={!canMove}>X−</button>
-      <button class="home" onclick={home} disabled={!canMove} title="Home $H">⌂</button>
-      <button class="right" onclick={() => jog("X", 1)} disabled={!canMove}>X+</button>
-      <button class="down" onclick={() => jog("Y", -1)} disabled={!canMove}>Y−</button>
+      <button class="up" onclick={() => jog("Y", 1)} disabled={!canJog}>Y+</button>
+      <button class="left" onclick={() => jog("X", -1)} disabled={!canJog}>X−</button>
+      <button class="home" onclick={home} disabled={!canHome} title="Home $H">⌂</button>
+      <button class="right" onclick={() => jog("X", 1)} disabled={!canJog}>X+</button>
+      <button class="down" onclick={() => jog("Y", -1)} disabled={!canJog}>Y−</button>
     </div>
 
     <div class="z">
-      <button onclick={() => jog("Z", 1)} disabled={!canMove}>Z+</button>
-      <button onclick={() => jog("Z", -1)} disabled={!canMove}>Z−</button>
+      <button onclick={() => jog("Z", 1)} disabled={!canJog}>Z+</button>
+      <button onclick={() => jog("Z", -1)} disabled={!canJog}>Z−</button>
     </div>
   </div>
 
@@ -73,8 +81,9 @@
   </div>
 
   <div class="row">
-    <button class="ghost" onclick={unlock} disabled={!canMove}>Unlock $X</button>
-    <button class="ghost" onclick={zeroAll} disabled={!canMove}>Zero XYZ</button>
+    <button class="ghost" onclick={unlock} disabled={!canUnlock}>Unlock $X</button>
+    <button class="ghost" onclick={zeroAll} disabled={!canZero}>Zero XYZ</button>
+    <button class="ghost" onclick={zeroZ} disabled={!canZero} title="Touch off Z (G10 L20 P0 Z0)">Zero Z</button>
     <button class="ghost" onclick={jogCancel} disabled={!connected}>Jog Cancel</button>
   </div>
 

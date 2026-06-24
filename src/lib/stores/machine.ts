@@ -59,3 +59,12 @@ export async function initMachineListeners(): Promise<void> {
 export function clearConsole(): void {
   consoleLines.set([]);
 }
+
+/** Append a synthetic line to the console (used for diagnostics like state
+ * discordances). */
+export function pushConsoleLine(line: string): void {
+  consoleLines.update((lines) => {
+    lines.push(line);
+    return lines.length > MAX_CONSOLE_LINES ? lines.slice(-MAX_CONSOLE_LINES) : lines;
+  });
+}

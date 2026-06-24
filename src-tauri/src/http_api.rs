@@ -121,6 +121,25 @@ pub async fn delete_file(host: String, dir: String, filename: String) -> Result<
         .map_err(|e| format!("delete parse: {e}"))
 }
 
+/// Read the frame anchor configuration from the firmware
+/// (`$/kinematics/MaslowKinematics/`) over HTTP and parse it. Used to tell
+/// whether the machine already has valid anchors loaded (calibrated) so the UI
+/// can offer the short "apply tension" resume path instead of full calibration.
+#[tauri::command]
+pub async fn read_maslow_anchors(host: String) -> Result<crate::maslow::Anchors, String> {
+    let base = normalize_host(&host);
+    let client = http_client(Duration::from_secs(10))?;
+    let url = format!("{base}/command");
+    let resp = client
+        .get(&url)
+        .query(&[("plain", "$/kinematics/MaslowKinematics/")])
+        .send()
+        .await
+        .map_err(|e| format!("read anchors: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("read anchors: {e}"))?;
+    crate::maslow::parse_anchors(&body).ok_or_else(|| format!("no anchor config in response: {body}"))
+}
+
 /// Test reachability of the machine and fetch a bit of firmware info.
 #[tauri::command]
 pub async fn ping_machine(host: String) -> PingResult {

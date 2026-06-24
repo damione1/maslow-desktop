@@ -1,30 +1,27 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
-  import { jobProgress } from "$lib/stores/job";
-  import { maslowInfo, maslowState } from "$lib/stores/maslow";
+  import { maslowInfo, maslowState, actionPolicy, anchors } from "$lib/stores/maslow";
 
   const connected = $derived($wsState === "connected");
-  const jobActive = $derived(
-    $jobProgress !== null &&
-      $jobProgress.state !== "done" &&
-      $jobProgress.state !== "error",
-  );
   const policy = $derived($maslowState);
   const busy = $derived(policy?.busy ?? false);
   const info = $derived($maslowInfo);
+  const calibrated = $derived($anchors?.valid ?? false);
 
-  // Base gate: connected, not streaming a job.
-  const ready = $derived(connected && !jobActive);
-
-  // Allowed actions come straight from the Rust state machine (single source
-  // of truth, derived from the firmware transition guards).
-  const can = (action: string) =>
-    ready && (policy?.allowed.includes(action) ?? false);
+  // Allowed actions come from the unified Rust action policy (reconciles the
+  // FluidNC state + the Maslow calibration state + any running job).
+  const ap = $derived($actionPolicy);
+  const can = (key: keyof NonNullable<typeof ap>) =>
+    connected && (ap?.[key] ?? false);
   const canRetract = $derived(can("retract"));
   const canExtend = $derived(can("extend"));
+  // While the machine is busy/transitional (e.g. it got stuck after a Stop in
+  // EXTENDING, where FluidNC reads Idle but the Maslow FSM stays put), Retract
+  // is the firmware's only accepted recovery. Surface it clearly.
+  const settling = $derived(connected && busy);
   const canComply = $derived(can("comply"));
-  const canTakeSlack = $derived(can("takeSlack"));
+  const canTakeSlack = $derived(can("take_slack"));
   const canCalibrate = $derived(can("calibrate"));
 
   // Short command names the firmware accepts (the embedded UI uses these;
@@ -70,6 +67,7 @@
     </span>
     {#if info}
       <span class="flags">
+        <span class:on={calibrated}>calibré</span>
         <span class:on={info.homed}>homed</span>
         <span class:on={info.extended}>extended</span>
         {#if info.calibrationInProgress}<span class="on cal">calibrating</span>{/if}
@@ -95,8 +93,19 @@
     </div>
   {/if}
 
+  {#if settling}
+    <div class="settling">
+      Machine en cours de stabilisation… <strong>Retract</strong> ramène à un état
+      connu si elle reste bloquée.
+    </div>
+  {/if}
+
   <div class="actions">
-    <button onclick={() => action("retract")} disabled={!canRetract}>Retract</button>
+    <button
+      class:recover={settling && canRetract}
+      onclick={() => action("retract")}
+      disabled={!canRetract}>Retract</button
+    >
     <button onclick={() => action("extend")} disabled={!canExtend}>Extend</button>
     <button onclick={() => action("comply")} disabled={!canComply}>Comply</button>
     <button onclick={() => action("takeSlack")} disabled={!canTakeSlack}>Take Slack</button>
@@ -209,10 +218,27 @@
     opacity: 0.5;
     padding: 0.3em 0;
   }
+  .settling {
+    font-size: 0.78em;
+    line-height: 1.35;
+    color: #e0a83d;
+    background: #2a2008;
+    border: 1px solid #6b4a1f;
+    border-radius: 7px;
+    padding: 0.4em 0.6em;
+  }
+  .settling strong {
+    color: #ffd166;
+  }
   .actions {
     display: flex;
     gap: 0.45em;
     flex-wrap: wrap;
+  }
+  button.recover {
+    background: #2e7d32;
+    border-color: #3ddc84;
+    box-shadow: 0 0 0 1px #3ddc84 inset;
   }
   button {
     flex: 1;

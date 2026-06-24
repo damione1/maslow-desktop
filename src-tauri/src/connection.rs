@@ -202,6 +202,24 @@ async fn connection_loop(
     let _ = app.emit("ws-state", "disconnected");
 }
 
+/// Recognise the short-form Maslow *action* commands (the belt / calibration /
+/// stop verbs the UI sends via `send_line`). After one of these the firmware
+/// state changes (or, for `$STOP`, FluidNC goes Idle while the Maslow FSM may
+/// stay put) and we want the UI to reflect it fast, so we burst-poll `$GSTATE`
+/// instead of waiting up to the normal 1.5 s `maslow_tick`. Polls (`$GSTATE`,
+/// `$MINFO`) are deliberately NOT actions.
+fn is_maslow_action(line: &str) -> bool {
+    matches!(
+        line.trim().to_ascii_uppercase().as_str(),
+        "$ALL" | "$EXT" | "$TKSLK" | "$CAL" | "$CMP" | "$STOP" | "$ESTOP"
+    )
+}
+
+/// How many fast `$GSTATE` polls to fire after an action, and how often. ~12 ×
+/// 250 ms ≈ 3 s of fast feedback, after which we fall back to the 1.5 s tick.
+const BURST_POLLS: u32 = 12;
+const BURST_INTERVAL_MS: u64 = 250;
+
 /// Send as many queued G-code lines as the firmware RX buffer allows.
 async fn pump(write: &mut WsSink, job: &mut Option<Job>) -> Result<(), String> {
     if let Some(j) = job.as_mut() {
@@ -239,8 +257,16 @@ async fn run_socket(
     // Maslow telemetry poll. Skipped while a job streams: `$Maslow/getInfo`
     // returns an `ok` that would corrupt the job's char-counting.
     let mut maslow_tick = tokio::time::interval(Duration::from_millis(1500));
+    // Fast post-action feedback loop: after a Maslow action command we want the
+    // UI to see the new firmware state within a few hundred ms (not 1.5 s). The
+    // interval runs continuously but only emits while `burst_remaining > 0`,
+    // which the Line handler arms when it sees an action command.
+    let mut maslow_burst = tokio::time::interval(Duration::from_millis(BURST_INTERVAL_MS));
+    let mut burst_remaining: u32 = 0;
     let mut last_activity = Instant::now();
-    let mut wco_cache: Vec<f32> = Vec::new();
+    let mut ctx = SocketCtx::default();
+    // Emit an initial policy so realtime controls light up immediately.
+    refresh_policy(app, &mut ctx, job.as_ref().map_or(false, |j| j.active()));
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -259,13 +285,13 @@ async fn run_socket(
                                 while let Some(idx) = buf.find('\n') {
                                     let raw: String = buf.drain(..=idx).collect();
                                     let line = raw.trim_end_matches(['\r', '\n']).to_string();
-                                    handle_incoming(app, &line, &mut wco_cache, &mut write, job).await?;
+                                    handle_incoming(app, &line, &mut ctx, &mut write, job).await?;
                                 }
                             }
                             Message::Text(t) => {
                                 for raw in t.split('\n') {
                                     let line = raw.trim_end_matches('\r').to_string();
-                                    handle_incoming(app, &line, &mut wco_cache, &mut write, job).await?;
+                                    handle_incoming(app, &line, &mut ctx, &mut write, job).await?;
                                 }
                             }
                             Message::Close(_) => return Ok(()),
@@ -283,8 +309,22 @@ async fn run_socket(
                             let _ = app.emit("grbl-line",
                                 "[blocked] stop the job to send manual commands".to_string());
                         } else {
+                            let is_action = is_maslow_action(&l);
                             if !l.ends_with('\n') { l.push('\n'); }
                             write.send(Message::Text(l)).await.map_err(|e| e.to_string())?;
+                            if is_action {
+                                // Reflect the new firmware state ASAP: ask for it
+                                // right now (one $MINFO + $GSTATE, queued right
+                                // after the action so the firmware answers post-
+                                // transition), then burst-poll $GSTATE for ~3 s.
+                                // Safe here because a streaming job is excluded
+                                // above — these extra `ok`s would corrupt char-
+                                // counting only mid-job, which can't happen here.
+                                let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
+                                let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
+                                burst_remaining = BURST_POLLS;
+                                maslow_burst.reset();
+                            }
                         }
                     }
                     Some(WsCommand::Realtime(b)) => {
@@ -350,6 +390,15 @@ async fn run_socket(
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
                 }
             }
+            _ = maslow_burst.tick(), if burst_remaining > 0 => {
+                // Fast follow-up after an action so the UI converges in a few
+                // hundred ms. Only $GSTATE (cheap, drives the policy); skipped
+                // during a job for the same char-counting reason as maslow_tick.
+                if !job.as_ref().map_or(false, |j| j.active()) {
+                    let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
+                }
+                burst_remaining -= 1;
+            }
         }
     }
 }
@@ -359,7 +408,7 @@ async fn run_socket(
 async fn handle_incoming(
     app: &AppHandle,
     line: &str,
-    wco_cache: &mut Vec<f32>,
+    ctx: &mut SocketCtx,
     write: &mut WsSink,
     job: &mut Option<Job>,
 ) -> Result<(), String> {
@@ -382,13 +431,16 @@ async fn handle_incoming(
                 streaming::emit_progress(app, job, None);
                 streaming::clear_saved(app);
                 *job = None;
+                // Job finished: manual actions become available again.
+                refresh_policy(app, ctx, false);
             } else {
                 streaming::emit_progress(app, job, None);
             }
         }
     }
 
-    dispatch_line(app, line, wco_cache);
+    let job_active = job.as_ref().map_or(false, |j| j.active());
+    route_line(app, line, ctx, job_active);
     Ok(())
 }
 
@@ -414,16 +466,66 @@ fn is_control(line: &str) -> bool {
         )
 }
 
-/// Classify and emit a single complete line (console + status).
-fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
+/// Suppress invalid Maslow state reports that land within this window after a
+/// state change — they are almost certainly late stragglers from reordering or
+/// the 1.5 s GSTATE poll lagging behind an action we just triggered.
+const STATE_DEBOUNCE_MS: u64 = 400;
+
+/// Per-socket reconciliation state, kept across lines within one connection.
+#[derive(Default)]
+struct SocketCtx {
+    /// FluidNC only emits WCO periodically; cache so work position stays stable.
+    wco_cache: Vec<f32>,
+    /// Authoritative Maslow calibration state, with transition validation.
+    tracker: maslow::StateTracker,
+    /// Last FluidNC machine state string (drives policy recompute on change).
+    fluidnc_state: String,
+    /// Last emitted action policy, to avoid spamming identical events.
+    last_policy: Option<maslow::ActionPolicy>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct Discord {
+    /// "straggler" = suppressed, "accepted" = machine prevailed (state updated).
+    kind: &'static str,
+    from: i32,
+    to: i32,
+    from_label: String,
+    to_label: String,
+}
+
+fn emit_discord(app: &AppHandle, kind: &'static str, from: i32, to: i32) {
+    let _ = app.emit(
+        "maslow-discord",
+        Discord {
+            kind,
+            from,
+            to,
+            from_label: maslow::label_for(from).to_string(),
+            to_label: maslow::label_for(to).to_string(),
+        },
+    );
+}
+
+/// Recompute the unified action policy and emit it only when it changed.
+fn refresh_policy(app: &AppHandle, ctx: &mut SocketCtx, job_active: bool) {
+    let p = maslow::action_policy(&ctx.fluidnc_state, ctx.tracker.current(), job_active);
+    if ctx.last_policy.as_ref() != Some(&p) {
+        ctx.last_policy = Some(p.clone());
+        let _ = app.emit("action-policy", p);
+    }
+}
+
+/// Classify and emit a single complete line, updating reconciliation state.
+fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool) {
     if line.is_empty() {
         return;
     }
     if let Some(mut status) = grbl::parse_status_report(line) {
         if !status.wco.is_empty() {
-            *wco_cache = status.wco.clone();
-        } else if !wco_cache.is_empty() {
-            status.wco = wco_cache.clone();
+            ctx.wco_cache = status.wco.clone();
+        } else if !ctx.wco_cache.is_empty() {
+            status.wco = ctx.wco_cache.clone();
         }
         if !status.wco.is_empty() && !status.mpos.is_empty() {
             status.wpos = status
@@ -433,7 +535,14 @@ fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
                 .map(|(m, o)| m - o)
                 .collect();
         }
+        let changed = status.state != ctx.fluidnc_state;
+        if changed {
+            ctx.fluidnc_state = status.state.clone();
+        }
         let _ = app.emit("machine-status", &status);
+        if changed {
+            refresh_policy(app, ctx, job_active);
+        }
         return;
     }
     if let Some(info) = maslow::parse_minfo(line) {
@@ -441,7 +550,21 @@ fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
         return;
     }
     if let Some(state) = maslow::parse_state(line) {
-        let _ = app.emit("maslow-state", maslow::policy_for(state));
+        match ctx.tracker.observe(state, STATE_DEBOUNCE_MS) {
+            maslow::Observation::First(s) | maslow::Observation::Valid(s) => {
+                let _ = app.emit("maslow-state", maslow::policy_for(s));
+                refresh_policy(app, ctx, job_active);
+            }
+            maslow::Observation::Unchanged => {}
+            maslow::Observation::Straggler { from, to } => {
+                emit_discord(app, "straggler", from, to);
+            }
+            maslow::Observation::Discord { from, to } => {
+                emit_discord(app, "accepted", from, to);
+                let _ = app.emit("maslow-state", maslow::policy_for(to));
+                refresh_policy(app, ctx, job_active);
+            }
+        }
         return;
     }
     if let Some(wp) = maslow::parse_waypoint(line) {
