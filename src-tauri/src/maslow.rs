@@ -449,6 +449,23 @@ pub struct MaslowConfig {
     // Belt tension / extension — Maslow_*.
     pub retract_current_threshold: f32,
     pub extend_dist: f32,
+    pub apply_tension_belt_retraction_limit: f32,
+    pub apply_tension_allow_limiting: bool,
+    // Material (mm) — Maslow_*Thickness.
+    pub spoilboard_thickness: f32,
+    pub work_thickness: f32,
+    // Calibration tuning — Maslow_*.
+    pub calibration_grid_size: f32,
+    pub calibration_grid_width_x: f32,
+    pub calibration_grid_height_y: f32,
+    pub acceptable_calibration_threshold: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub vertical: bool,
+    // Park position — Maslow_Park_*.
+    pub park_x: f32,
+    pub park_y: f32,
+    pub park_z: f32,
     /// Geometry sanity (same check as the `Anchors` badge).
     pub anchors_valid: bool,
 }
@@ -473,6 +490,21 @@ pub fn parse_maslow_config(dump: &str) -> Option<MaslowConfig> {
         let short = key.rsplit('/').next().unwrap_or(key);
         let val = val.trim();
 
+        // Boolean settings (true/1/yes) are handled before the numeric match.
+        match key {
+            "Maslow_vertical" => {
+                c.vertical = matches!(val, "true" | "1" | "yes");
+                found = true;
+                continue;
+            }
+            "Maslow_Apply_Tension_Allow_Limiting" => {
+                c.apply_tension_allow_limiting = matches!(val, "true" | "1" | "yes");
+                found = true;
+                continue;
+            }
+            _ => {}
+        }
+
         let slot: &mut f32 = match (key, short) {
             (_, "tlX") => &mut c.tl_x,
             (_, "tlY") => &mut c.tl_y,
@@ -492,6 +524,18 @@ pub fn parse_maslow_config(dump: &str) -> Option<MaslowConfig> {
             ("Maslow_Work_Area_Center_Offset_Y", _) => &mut c.work_area_center_offset_y,
             ("Maslow_Retract_Current_Threshold", _) => &mut c.retract_current_threshold,
             ("Maslow_Extend_Dist", _) => &mut c.extend_dist,
+            ("Maslow_Apply_Tension_Belt_Retraction_Limit", _) => &mut c.apply_tension_belt_retraction_limit,
+            ("Maslow_spoilboardThickness", _) => &mut c.spoilboard_thickness,
+            ("Maslow_workThickness", _) => &mut c.work_thickness,
+            ("Maslow_calibration_grid_size", _) => &mut c.calibration_grid_size,
+            ("Maslow_calibration_grid_width_mm_X", _) => &mut c.calibration_grid_width_x,
+            ("Maslow_calibration_grid_height_mm_Y", _) => &mut c.calibration_grid_height_y,
+            ("Maslow_Acceptable_Calibration_Threshold", _) => &mut c.acceptable_calibration_threshold,
+            ("Maslow_Scale_X", _) => &mut c.scale_x,
+            ("Maslow_Scale_Y", _) => &mut c.scale_y,
+            ("Maslow_Park_X", _) => &mut c.park_x,
+            ("Maslow_Park_Y", _) => &mut c.park_y,
+            ("Maslow_Park_Z", _) => &mut c.park_z,
             _ => continue,
         };
         let Ok(v) = val.parse::<f32>() else {
@@ -746,6 +790,36 @@ mod tests {
         assert_eq!(c.retract_current_threshold, 1300.0);
         assert_eq!(c.extend_dist, 1700.0);
         assert!(c.anchors_valid, "real frame geometry should be valid");
+    }
+
+    #[test]
+    fn parses_v122_material_calibration_park_and_bools() {
+        // Flattened `$CD` form (bare `key=value`) for the extra v1.22 settings.
+        let dump = "Maslow_spoilboardThickness=18.5\n\
+                    Maslow_workThickness=12.0\n\
+                    Maslow_calibration_grid_size=7\n\
+                    Maslow_calibration_grid_width_mm_X=2000\n\
+                    Maslow_calibration_grid_height_mm_Y=1000\n\
+                    Maslow_Acceptable_Calibration_Threshold=0.45\n\
+                    Maslow_Scale_X=1.002\n\
+                    Maslow_Scale_Y=0.998\n\
+                    Maslow_Apply_Tension_Belt_Retraction_Limit=300\n\
+                    Maslow_Apply_Tension_Allow_Limiting=true\n\
+                    Maslow_vertical=false\n\
+                    Maslow_Park_X=10\nMaslow_Park_Y=-20\nMaslow_Park_Z=2\n";
+        let c = parse_maslow_config(dump).unwrap();
+        assert_eq!(c.spoilboard_thickness, 18.5);
+        assert_eq!(c.work_thickness, 12.0);
+        assert_eq!(c.calibration_grid_size, 7.0);
+        assert_eq!(c.calibration_grid_width_x, 2000.0);
+        assert_eq!(c.acceptable_calibration_threshold, 0.45);
+        assert_eq!(c.scale_x, 1.002);
+        assert_eq!(c.scale_y, 0.998);
+        assert_eq!(c.apply_tension_belt_retraction_limit, 300.0);
+        assert!(c.apply_tension_allow_limiting);
+        assert!(!c.vertical);
+        assert_eq!(c.park_x, 10.0);
+        assert_eq!(c.park_z, 2.0);
     }
 
     #[test]
