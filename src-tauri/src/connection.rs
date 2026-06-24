@@ -15,6 +15,7 @@
 //   "stream-progress"-> streaming::Progress JSON
 
 use crate::grbl;
+use crate::maslow;
 use crate::streaming::{self, Job};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -235,6 +236,9 @@ async fn run_socket(
 
     let mut buf = String::new();
     let mut status_tick = tokio::time::interval(Duration::from_millis(250));
+    // Maslow telemetry poll. Skipped while a job streams: `$Maslow/getInfo`
+    // returns an `ok` that would corrupt the job's char-counting.
+    let mut maslow_tick = tokio::time::interval(Duration::from_millis(1500));
     let mut last_activity = Instant::now();
     let mut wco_cache: Vec<f32> = Vec::new();
 
@@ -338,6 +342,12 @@ async fn run_socket(
                     return Err("watchdog: no activity for 20s".into());
                 }
             }
+            _ = maslow_tick.tick() => {
+                if !job.as_ref().map_or(false, |j| j.active()) {
+                    let _ = write.send(Message::Text("$Maslow/getInfo\n".to_string())).await;
+                    let _ = write.send(Message::Text("$Maslow/gstate\n".to_string())).await;
+                }
+            }
         }
     }
 }
@@ -422,6 +432,14 @@ fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
                 .collect();
         }
         let _ = app.emit("machine-status", &status);
+        return;
+    }
+    if let Some(info) = maslow::parse_minfo(line) {
+        let _ = app.emit("maslow-info", &info);
+        return;
+    }
+    if let Some(state) = maslow::parse_state(line) {
+        let _ = app.emit("maslow-state", state);
         return;
     }
     if is_control(line) {

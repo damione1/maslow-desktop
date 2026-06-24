@@ -4,7 +4,7 @@ App desktop Mac/Windows (Rust + Tauri + SvelteKit) qui pilote la Maslow M4 via
 l'API réseau du firmware (HTTP + WebSocket). Réimplémentation moderne de l'UI web
 embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP32.
 
-**État courant** : Phase 2 terminée (code) | Prochaine étape : Phase 3 — Maslow state machine (MINFO) + courroies | À valider : `npm run tauri dev` connecté à 192.168.0.106 (jog, hold/resume, streamer un .nc + couper le wifi → reprise, browse/run/delete SD)
+**État courant** : Phase 3 terminée (code) | Prochaine étape : Phase 4 — workflow calibration piloté + visualisation waypoints/toolpath | À valider : `npm run tauri dev` connecté à 192.168.0.106 (états Maslow, longueurs courroies live, boutons retract/extend/calibrate contextuels)
 
 > Découvertes machine réelle (FluidNC v1.21, Maslow M4 @ 192.168.0.106) :
 > - WebSocket = `ws://<host>:81/` (PAS `/ws` → 404). Web port + 1.
@@ -34,10 +34,12 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 - [x] Gestionnaire fichiers SD : `upload_file` (POST multipart ESP3D `path`/`<full>S`/`myfile[]`), `list_files`, `delete_file` + `FileBrowser.svelte` (navigation dossiers, Run via `$SD/Run=`, delete, upload). _Rename : reporté (pas prioritaire)._
 
 ## Phase 3 — Maslow state machine + courroies
-- [ ] Polling MINFO (`$Maslow/getInfo`) + parsing
-- [ ] Mapping 10 états + boutons contextuels
-- [ ] BeltStatus (tl/tr/bl/br + erreurs etl/etr/ebl/ebr)
-- [ ] Overrides moteur manuels (TLI/TRO…)
+- [x] Polling MINFO (`$Maslow/getInfo`) + `$Maslow/gstate` toutes les 1.5 s **uniquement hors job** (sinon le `ok` fausserait le char-counting) ; `maslow.rs` parse MINFO (homed/calibrationInProgress/tl/tr/br/bl/etl/etr/ebr/ebl/extended) + `[MSG:INFO: Current state: N]`. 4 tests.
+- [x] Mapping 10 états (0-9 MaslowEnums.h) + boutons contextuels (`MaslowPanel.svelte`) répliquant `updateDynamicButtons()` : retract `[0,2,4,7]`, extend/comply `[0,2,4]`, takeSlack/calibrate `[4]`. Stop/E-Stop. Badges homed/extended/calibrating, animation "busy" états 1/3/5/6/9.
+- [x] BeltStatus tl/tr/bl/br (longueurs mm) + erreurs etl/etr/ebl/ebr (surlignées si |err|>1 mm), grille 4 coins. Filtrage des `ok` de polling dans la console.
+- [ ] Overrides moteur manuels (TLI/TRO…) — reporté (debug avancé, non prioritaire).
+
+> Note : commandes Maslow (`$Maslow/...`) désactivées pendant un job en cours ; l'arrêt d'urgence en cours de coupe reste le Reset ⌃X realtime (toujours dispo).
 
 ## Phase 4 — Calibration Levenberg + visualisation
 - [ ] Workflow calibration piloté (retract → extend → calibrate)
@@ -64,3 +66,4 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 - 2026-06-24 — Phase 1 : `grbl.rs` (parser status, 4 tests), `connection.rs` (WS manager port 81, reconnect/watchdog), stores + StatusPanel + Console. Protocole confirmé via websocat sur la vraie machine.
 - 2026-06-24 — Phase 2 (streaming+upload) : `streaming.rs` (Job char-counting, parsing gcode, persistance disque, 4 tests), intégration dans `connection.rs` (job possédé par `connection_loop`, ack→pump, interruption sur déco, commandes `stream_start/pause/resume/stop/saved`), `http_api.rs` (`upload_file`/`list_files`/`delete_file`), plugin dialog, store `job.ts` + `JobPanel.svelte` (barre de progression, reprise, upload). 8 tests Rust verts, svelte-check 0 erreur.
 - 2026-06-24 — Phase 2 (contrôle+SD) : `JogControls.svelte` (jog XYZ + home/unlock/zero/jog-cancel + realtime hold/resume/reset), `FileBrowser.svelte` (navigation SD, run/delete), layout 2 colonnes. Phase 2 complète (rename SD reporté). svelte-check 0 erreur.
+- 2026-06-24 — Phase 3 (Maslow state machine + courroies) : `maslow.rs` (parse MINFO + état, 4 tests), polling 1.5 s hors job dans `connection.rs`, events `maslow-info`/`maslow-state`, store `maslow.ts`, `MaslowPanel.svelte` (état + boutons contextuels + courroies). 12 tests Rust verts, svelte-check 0 erreur.
