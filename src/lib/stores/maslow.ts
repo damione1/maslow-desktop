@@ -67,6 +67,30 @@ export interface Anchors {
   valid: boolean;
 }
 
+/** Full Maslow firmware configuration (anchors + work area + tension),
+ * read/written via `$/<key>`. Field names map to the FluidNC config keys. */
+export interface MaslowConfig {
+  tl_x: number;
+  tl_y: number;
+  tl_z: number;
+  tr_x: number;
+  tr_y: number;
+  tr_z: number;
+  bl_x: number;
+  bl_y: number;
+  bl_z: number;
+  br_x: number;
+  br_y: number;
+  br_z: number;
+  work_area_x: number;
+  work_area_y: number;
+  work_area_center_offset_x: number;
+  work_area_center_offset_y: number;
+  retract_current_threshold: number;
+  extend_dist: number;
+  anchors_valid: boolean;
+}
+
 interface Discord {
   kind: string;
   from: number;
@@ -87,6 +111,17 @@ export const calComplete = writable(false);
 export const actionPolicy = writable<ActionPolicy | null>(null);
 /** Frame anchors read from the firmware config, or null until first read. */
 export const anchors = writable<Anchors | null>(null);
+/** Full editable Maslow config, or null until first read of the config screen. */
+export const maslowConfig = writable<MaslowConfig | null>(null);
+
+/** Read the full Maslow configuration (anchors + work area + tension) from the
+ * firmware over HTTP. Heavier than `refreshAnchors` (several `$/` reads), so it
+ * is only triggered by the config screen, not on every connect. */
+export async function refreshConfig(): Promise<void> {
+  const host = get(connection).host;
+  if (!host) return;
+  maslowConfig.set(await invoke<MaslowConfig>("read_maslow_config", { host }));
+}
 
 /** Fetch the frame anchors from the firmware (HTTP) to learn whether the
  * machine is already calibrated. Safe to call repeatedly; failures are
@@ -153,6 +188,7 @@ export async function initMaslowListeners(): Promise<void> {
       maslowState.set(null);
       actionPolicy.set(null);
       anchors.set(null);
+      maslowConfig.set(null);
     } else if (e.payload === "connected") {
       // Learn the calibration status as soon as we are live.
       refreshAnchors();

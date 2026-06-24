@@ -60,6 +60,26 @@ export function clearConsole(): void {
   consoleLines.set([]);
 }
 
+/** Map a FluidNC machine state to a color class (shared by StatusPanel and the
+ * global top-bar state pill so they stay in sync). */
+export function stateClass(state: string): string {
+  switch (state) {
+    case "Idle":
+      return "idle";
+    case "Run":
+    case "Jog":
+    case "Home":
+      return "run";
+    case "Hold":
+    case "Door":
+      return "hold";
+    case "Alarm":
+      return "alarm";
+    default:
+      return "other";
+  }
+}
+
 /** Append a synthetic line to the console (used for diagnostics like state
  * discordances). */
 export function pushConsoleLine(line: string): void {

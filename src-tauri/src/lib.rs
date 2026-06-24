@@ -15,6 +15,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             http_api::ping_machine,
             http_api::read_maslow_anchors,
+            http_api::read_maslow_config,
+            http_api::write_maslow_setting,
+            http_api::save_maslow_config,
             http_api::upload_file,
             http_api::list_files,
             http_api::delete_file,
