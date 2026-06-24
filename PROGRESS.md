@@ -48,6 +48,14 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 
 ---
 
+## En suspens / à valider sur hardware
+- [ ] **Cycle de reprise** : streamer un .nc, couper le WiFi → vérifier passage en `interrupted` + reprise correcte à `acked` (rejeu de 1-2 lignes acceptable, jamais de saut).
+- [ ] **État modal après reconnexion** : après une vraie coupure, FluidNC peut perdre G54/unités/position. Si le test révèle un décalage à la reprise → injecter un préambule modal (`G21 G90 G54 ...`) avant de reprendre le flux. À décider selon comportement réel.
+- [ ] **Pause = feed-hold `!`** : valider que le mouvement s'arrête vite et que `~` + pump reprend proprement (acks en attente après `!`).
+- [ ] **Reset ⌃X pendant un job** : on invalide le suivi (`invalidate_inflight`) ; vérifier que l'état UI passe bien `interrupted` et que la reprise repart juste.
+- [ ] Rename SD (reporté, non prioritaire).
+- [ ] Single-active-client : afficher si un autre client (UI web embarquée) prend la main via `ACTIVE_ID` (event `ws-pageid` déjà émis, pas encore exploité dans l'UI).
+
 ## Phases ultérieures (hors périmètre "jusqu'à Levenberg")
 - Phase 5 — Auth/login, OTA firmware (`/updatefw`), préférences, packaging signé Mac/Windows, auto-update.
 
