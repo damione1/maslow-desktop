@@ -14,6 +14,7 @@
 //   "ws-control"     -> control message string
 //   "stream-progress"-> streaming::Progress JSON
 
+use crate::calibration;
 use crate::grbl;
 use crate::maslow;
 use crate::streaming::{self, Job};
@@ -570,6 +571,20 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
     if let Some(wp) = maslow::parse_waypoint(line) {
         let _ = app.emit("maslow-waypoint", wp);
         return;
+    }
+    if let Some(measurements) = calibration::parse_clbm(line) {
+        // Raw belt measurements the firmware logs before each recompute — the
+        // input the client-side solver re-solves from.
+        let _ = app.emit("cal-measurements", measurements);
+        return;
+    }
+    if let Some(fit) = calibration::parse_fit_line(line) {
+        let _ = app.emit("cal-firmware-fit", fit);
+        // fall through so the fit summary also appears in the console
+    }
+    if let Some(anchors) = calibration::parse_recompute_line(line) {
+        let _ = app.emit("cal-firmware-anchors", anchors);
+        // fall through so the result also appears in the console
     }
     if line.contains("Calibration complete") {
         let _ = app.emit("maslow-cal-complete", ());
