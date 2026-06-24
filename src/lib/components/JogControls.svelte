@@ -70,14 +70,20 @@
   </div>
 
   <div class="row steps">
-    <span class="lbl">Step</span>
-    {#each STEPS as s}
-      <button class="chip" class:on={step === s} onclick={() => (step = s)}>
-        {s}
-      </button>
-    {/each}
-    <span class="lbl">Feed</span>
-    <input class="feed" type="number" min="1" bind:value={feed} />
+    <div class="group">
+      <span class="lbl">Step</span>
+      <div class="chips">
+        {#each STEPS as s}
+          <button class="chip" class:on={step === s} onclick={() => (step = s)}>
+            {s}
+          </button>
+        {/each}
+      </div>
+    </div>
+    <label class="group">
+      <span class="lbl">Feed</span>
+      <input class="feed" type="number" min="1" bind:value={feed} />
+    </label>
   </div>
 
   <div class="row">
@@ -161,6 +167,20 @@
   }
   .row button {
     padding: 0.4em 0.9em;
+  }
+  .steps {
+    gap: 1em;
+    row-gap: 0.6em;
+  }
+  .group {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+  }
+  .chips {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
   }
   .lbl {
     font-size: 0.78em;

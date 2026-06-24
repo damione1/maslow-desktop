@@ -41,16 +41,22 @@
     border-radius: 10px;
     display: flex;
     flex-direction: column;
-    height: 280px;
+    height: 100%;
+    width: 100%;
+    min-height: 0;
+    /* Clip children to the rounded border so nothing pokes past the corners. */
+    overflow: hidden;
   }
   header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.4em 0.8em;
+    gap: 0.8em;
+    padding: 0.55em 0.9em;
     border-bottom: 1px solid #2a2a2a;
     font-size: 0.85em;
     opacity: 0.8;
+    flex: 0 0 auto;
   }
   header button {
     font-size: 0.8em;
@@ -63,8 +69,10 @@
   }
   .lines {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 0.5em 0.8em;
+    overflow-x: hidden;
+    padding: 0.6em 0.9em 0.7em;
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.78em;
     line-height: 1.45;

@@ -119,7 +119,11 @@
     padding: 0.4em 0.6em;
   }
   canvas {
+    display: block;
     width: 100%;
+    /* Full-width waypoint map: never let the canvas push past its column and
+       trigger a horizontal scrollbar. */
+    max-width: 100%;
     height: auto;
     background: #0e0e0e;
     border: 1px solid #2a2a2a;

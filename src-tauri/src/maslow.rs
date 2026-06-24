@@ -396,6 +396,128 @@ pub fn anchors_valid(a: &Anchors) -> bool {
     non_zero && top_above_bottom && left_of_right && has_width
 }
 
+// --- Full Maslow configuration --------------------------------------------
+//
+// The editable config screen exposes three families of firmware settings,
+// confirmed against the firmware source AND validated against the real machine
+// (FluidNC v1.21 on a Maslow M4):
+//
+//   * Anchor coordinates — `kinematics/MaslowKinematics/<key>` (12 items: the
+//     TL/TR/BL/BR X/Y/Z corners), registered in MaslowKinematics::group().
+//   * Work area — root items `Maslow_Work_Area_X/Y` and
+//     `Maslow_Work_Area_Center_Offset_X/Y`, registered in
+//     MachineConfig::groupM4Items() (the prefix `M` == "Maslow").
+//   * Belt tension / extension — root items `Maslow_Retract_Current_Threshold`
+//     and `Maslow_Extend_Dist`.
+//
+// NB: `Maslow_Apply_Tension_Belt_Retraction_Limit` and
+// `Maslow_Apply_Tension_Allow_Limiting` were intentionally dropped: the real
+// machine (v1.21) rejects them with `error:3` ("Invalid setting or command").
+// They were only added to the firmware in commit 8088b960 (2026-06-02), which
+// ships in v1.22.0 — so they do NOT exist as `$/` settings on v1.21. The reader
+// also skips any key the firmware reports as invalid, so a newer/older firmware
+// simply leaves the corresponding field at its default rather than failing the
+// whole load.
+//
+// All are read with `$/<path>` (the firmware echoes `$/<path>=<value>`) and
+// written with `$/<path>=<value>`; `$CO` then persists the config to flash.
+
+/// The Maslow-relevant firmware settings we surface for display and editing.
+/// Field names map 1:1 to the config keys (see the `path` table on the
+/// frontend). Floats so we never lose precision on the wire; the firmware
+/// stores the threshold as an int but accepts a float string just fine.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct MaslowConfig {
+    // Anchor coordinates (mm) — kinematics/MaslowKinematics/<key>.
+    pub tl_x: f32,
+    pub tl_y: f32,
+    pub tl_z: f32,
+    pub tr_x: f32,
+    pub tr_y: f32,
+    pub tr_z: f32,
+    pub bl_x: f32,
+    pub bl_y: f32,
+    pub bl_z: f32,
+    pub br_x: f32,
+    pub br_y: f32,
+    pub br_z: f32,
+    // Work area (mm) — Maslow_Work_Area_*.
+    pub work_area_x: f32,
+    pub work_area_y: f32,
+    pub work_area_center_offset_x: f32,
+    pub work_area_center_offset_y: f32,
+    // Belt tension / extension — Maslow_*.
+    pub retract_current_threshold: f32,
+    pub extend_dist: f32,
+    /// Geometry sanity (same check as the `Anchors` badge).
+    pub anchors_valid: bool,
+}
+
+/// Parse a concatenation of firmware setting echoes into a `MaslowConfig`.
+/// Each recognised token looks like `$/<path>=<value>`; we key off the last
+/// path segment for the kinematics group and off the full root key otherwise,
+/// so the order and the exact section header lines are irrelevant. Unknown
+/// keys and unparseable values are ignored. Returns None if no recognised key
+/// was present at all (mirrors `parse_anchors`).
+pub fn parse_maslow_config(dump: &str) -> Option<MaslowConfig> {
+    let mut c = MaslowConfig::default();
+    let mut found = false;
+
+    for token in dump.split_whitespace() {
+        let Some((key, val)) = token.split_once('=') else {
+            continue;
+        };
+        // Drop any `$/` prefix and, for the nested kinematics keys, keep only
+        // the trailing segment (e.g. `kinematics/MaslowKinematics/tlX` -> `tlX`).
+        let key = key.trim_start_matches("$/");
+        let short = key.rsplit('/').next().unwrap_or(key);
+        let val = val.trim();
+
+        let slot: &mut f32 = match (key, short) {
+            (_, "tlX") => &mut c.tl_x,
+            (_, "tlY") => &mut c.tl_y,
+            (_, "tlZ") => &mut c.tl_z,
+            (_, "trX") => &mut c.tr_x,
+            (_, "trY") => &mut c.tr_y,
+            (_, "trZ") => &mut c.tr_z,
+            (_, "blX") => &mut c.bl_x,
+            (_, "blY") => &mut c.bl_y,
+            (_, "blZ") => &mut c.bl_z,
+            (_, "brX") => &mut c.br_x,
+            (_, "brY") => &mut c.br_y,
+            (_, "brZ") => &mut c.br_z,
+            ("Maslow_Work_Area_X", _) => &mut c.work_area_x,
+            ("Maslow_Work_Area_Y", _) => &mut c.work_area_y,
+            ("Maslow_Work_Area_Center_Offset_X", _) => &mut c.work_area_center_offset_x,
+            ("Maslow_Work_Area_Center_Offset_Y", _) => &mut c.work_area_center_offset_y,
+            ("Maslow_Retract_Current_Threshold", _) => &mut c.retract_current_threshold,
+            ("Maslow_Extend_Dist", _) => &mut c.extend_dist,
+            _ => continue,
+        };
+        let Ok(v) = val.parse::<f32>() else {
+            continue;
+        };
+        *slot = v;
+        found = true;
+    }
+
+    if !found {
+        return None;
+    }
+    c.anchors_valid = anchors_valid(&Anchors {
+        tl_x: c.tl_x,
+        tl_y: c.tl_y,
+        tr_x: c.tr_x,
+        tr_y: c.tr_y,
+        bl_x: c.bl_x,
+        bl_y: c.bl_y,
+        br_x: c.br_x,
+        br_y: c.br_y,
+        valid: false,
+    });
+    Some(c)
+}
+
 /// A calibration grid waypoint reported by the firmware.
 #[derive(Serialize, Clone, Debug)]
 pub struct Waypoint {
@@ -588,6 +710,69 @@ mod tests {
         assert!(anchors_valid(&a));
         a.tl_x = 3500.0; // left now to the right of right anchor
         assert!(!anchors_valid(&a));
+    }
+
+    #[test]
+    fn parses_full_config() {
+        // Kinematics section dump (anchors incl. Z) + the root Maslow_* keys,
+        // exactly as the firmware echoes them for `$/kinematics/...` and
+        // individual `$/Maslow_*` reads (the v1.21 set of valid keys).
+        let dump = "/kinematics/MaslowKinematics:\n\
+                    $/kinematics/MaslowKinematics/tlX=-27.600\n\
+                    $/kinematics/MaslowKinematics/tlY=2064.900\n\
+                    $/kinematics/MaslowKinematics/tlZ=100.000\n\
+                    $/kinematics/MaslowKinematics/trX=2924.300\n\
+                    $/kinematics/MaslowKinematics/trY=2066.500\n\
+                    $/kinematics/MaslowKinematics/trZ=56.000\n\
+                    $/kinematics/MaslowKinematics/blX=0.000\n\
+                    $/kinematics/MaslowKinematics/blY=0.000\n\
+                    $/kinematics/MaslowKinematics/blZ=34.000\n\
+                    $/kinematics/MaslowKinematics/brX=2953.200\n\
+                    $/kinematics/MaslowKinematics/brY=0.000\n\
+                    $/kinematics/MaslowKinematics/brZ=78.000\n\
+                    ok\n\
+                    $/Maslow_Work_Area_X=2440.000\nok\n\
+                    $/Maslow_Work_Area_Y=1220.000\nok\n\
+                    $/Maslow_Work_Area_Center_Offset_X=0.000\nok\n\
+                    $/Maslow_Work_Area_Center_Offset_Y=0.000\nok\n\
+                    $/Maslow_Retract_Current_Threshold=1300\nok\n\
+                    $/Maslow_Extend_Dist=1700.000\nok\n";
+        let c = parse_maslow_config(dump).unwrap();
+        assert_eq!(c.tl_x, -27.6);
+        assert_eq!(c.tl_z, 100.0);
+        assert_eq!(c.br_z, 78.0);
+        assert_eq!(c.work_area_x, 2440.0);
+        assert_eq!(c.work_area_y, 1220.0);
+        assert_eq!(c.retract_current_threshold, 1300.0);
+        assert_eq!(c.extend_dist, 1700.0);
+        assert!(c.anchors_valid, "real frame geometry should be valid");
+    }
+
+    #[test]
+    fn config_skips_invalid_keys_and_partial() {
+        // A partial dump that also includes the firmware's rejection echoes for
+        // the keys absent on v1.21 (`Maslow_Apply_Tension_*`). The error lines
+        // carry no `=` token, so the parser ignores them: a single rejected key
+        // must never break the whole load.
+        let dump = "$/Maslow_Work_Area_X=1500\nok\n\
+                    [MSG:ERR: Invalid setting or command: /Maslow_Apply_Tension_Belt_Retraction_Limit]\n\
+                    error:3\n\
+                    [MSG:ERR: Invalid setting or command: /Maslow_Apply_Tension_Allow_Limiting]\n\
+                    error:3\n";
+        let c = parse_maslow_config(dump).unwrap();
+        assert_eq!(c.work_area_x, 1500.0);
+        // Anchors absent -> default zeros -> geometry invalid.
+        assert!(!c.anchors_valid);
+    }
+
+    #[test]
+    fn config_rejects_non_dump() {
+        assert!(parse_maslow_config("ok").is_none());
+        assert!(parse_maslow_config("<Idle|MPos:0,0,0>").is_none());
+        // A dump containing ONLY rejection echoes (every key invalid) yields
+        // None rather than a bogus all-zero config.
+        let only_errs = "[MSG:ERR: Invalid setting or command: /Maslow_Apply_Tension_Allow_Limiting]\nerror:3\n";
+        assert!(parse_maslow_config(only_errs).is_none());
     }
 
     #[test]

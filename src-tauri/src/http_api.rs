@@ -140,6 +140,105 @@ pub async fn read_maslow_anchors(host: String) -> Result<crate::maslow::Anchors,
     crate::maslow::parse_anchors(&body).ok_or_else(|| format!("no anchor config in response: {body}"))
 }
 
+/// Root-level Maslow config keys (the `M` prefix is "Maslow"), confirmed in
+/// `MachineConfig::groupM4Items()` AND verified valid on the real machine
+/// (FluidNC v1.21). The anchor coordinates live separately under the
+/// `kinematics/MaslowKinematics/` section and are read in one shot.
+///
+/// `Maslow_Apply_Tension_Belt_Retraction_Limit` / `_Allow_Limiting` are
+/// deliberately NOT here: they only exist from firmware v1.22.0 onward and the
+/// v1.21 machine rejects them with `error:3`. The per-key reader below also
+/// skips any key the firmware reports as invalid, so this list staying ahead of
+/// (or behind) a given firmware never breaks the load.
+const MASLOW_ROOT_KEYS: &[&str] = &[
+    "Maslow_Work_Area_X",
+    "Maslow_Work_Area_Y",
+    "Maslow_Work_Area_Center_Offset_X",
+    "Maslow_Work_Area_Center_Offset_Y",
+    "Maslow_Retract_Current_Threshold",
+    "Maslow_Extend_Dist",
+];
+
+/// True when a `/command` body is the firmware's rejection of an unknown
+/// setting key. The firmware answers an invalid `$/<key>` read with HTTP 200
+/// but a body like `[MSG:ERR: Invalid setting or command: /<key>]` + `error:N`,
+/// so we must inspect the body (not the HTTP status) to detect it.
+fn is_rejected(body: &str) -> bool {
+    let b = body.to_ascii_lowercase();
+    b.contains("invalid setting") || b.contains("error:")
+}
+
+/// Run a `$`/gcode command over the synchronous HTTP `/command` endpoint and
+/// return the firmware's textual output (the same channel output the WebSocket
+/// would carry). Errors on a non-2xx HTTP status.
+async fn run_command(host: &str, plain: &str) -> Result<String, String> {
+    let base = normalize_host(host);
+    let client = http_client(Duration::from_secs(10))?;
+    let url = format!("{base}/command");
+    let resp = client
+        .get(&url)
+        .query(&[("plain", plain)])
+        .send()
+        .await
+        .map_err(|e| format!("{plain}: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if status.is_success() {
+        Ok(body)
+    } else {
+        Err(format!("{plain}: HTTP {status}: {body}"))
+    }
+}
+
+/// Read the full Maslow-relevant configuration (anchors + work area + tension)
+/// over HTTP and parse it into a typed struct. The kinematics anchors come from
+/// a single section dump; the root `Maslow_*` items are read individually and
+/// independently — each key is best effort. A key the firmware does not know is
+/// rejected with `error:3` (HTTP 200, error in the body); we skip such replies
+/// instead of folding their error text into the dump, so one unknown key never
+/// aborts the whole load (graceful degradation across firmware versions).
+#[tauri::command]
+pub async fn read_maslow_config(host: String) -> Result<crate::maslow::MaslowConfig, String> {
+    let mut dump = run_command(&host, "$/kinematics/MaslowKinematics/").await?;
+    for key in MASLOW_ROOT_KEYS {
+        match run_command(&host, &format!("$/{key}")).await {
+            // Only fold in a successful echo; drop firmware rejections and
+            // transport errors so they cannot poison the parse.
+            Ok(body) if !is_rejected(&body) => {
+                dump.push('\n');
+                dump.push_str(&body);
+            }
+            _ => {}
+        }
+    }
+    crate::maslow::parse_maslow_config(&dump)
+        .ok_or_else(|| format!("no Maslow config in response: {dump}"))
+}
+
+/// Write a single FluidNC setting: `$/<path>=<value>`. `path` is the full config
+/// path (e.g. `Maslow_Work_Area_X` or `kinematics/MaslowKinematics/tlX`). The
+/// firmware silently accepts a float/int write; a rejected write echoes an
+/// `error:`/`[MSG:ERR...]`, which we surface as an Err so the UI can react.
+#[tauri::command]
+pub async fn write_maslow_setting(host: String, path: String, value: String) -> Result<String, String> {
+    let body = run_command(&host, &format!("$/{path}={value}")).await?;
+    if body.to_ascii_lowercase().contains("error") {
+        return Err(body.trim().to_string());
+    }
+    Ok(body.trim().to_string())
+}
+
+/// Persist the current (runtime-edited) config to flash via `$CO`
+/// (Config/Overwrite). Without this, edited settings are lost on reboot.
+#[tauri::command]
+pub async fn save_maslow_config(host: String) -> Result<String, String> {
+    let body = run_command(&host, "$CO").await?;
+    if body.to_ascii_lowercase().contains("error") {
+        return Err(body.trim().to_string());
+    }
+    Ok(body.trim().to_string())
+}
+
 /// Test reachability of the machine and fetch a bit of firmware info.
 #[tauri::command]
 pub async fn ping_machine(host: String) -> PingResult {
