@@ -7,6 +7,7 @@
   import { initMaslowListeners } from "$lib/stores/maslow";
   import StatusPanel from "$lib/components/StatusPanel.svelte";
   import MaslowPanel from "$lib/components/MaslowPanel.svelte";
+  import CalibrationView from "$lib/components/CalibrationView.svelte";
   import JogControls from "$lib/components/JogControls.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
@@ -59,6 +60,7 @@
       </div>
       <div class="col">
         <JobPanel />
+        <CalibrationView />
         <FileBrowser />
       </div>
     </div>

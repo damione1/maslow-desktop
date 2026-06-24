@@ -4,7 +4,7 @@ App desktop Mac/Windows (Rust + Tauri + SvelteKit) qui pilote la Maslow M4 via
 l'API réseau du firmware (HTTP + WebSocket). Réimplémentation moderne de l'UI web
 embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP32.
 
-**État courant** : Phase 3 terminée (code) | Prochaine étape : Phase 4 — workflow calibration piloté + visualisation waypoints/toolpath | À valider : `npm run tauri dev` connecté à 192.168.0.106 (états Maslow, longueurs courroies live, boutons retract/extend/calibrate contextuels)
+**État courant** : Phase 4 en cours — state machine firmware + waypoints + viz canvas (code) | Prochaine étape : workflow calibration guidé (wizard) + écran config Maslow (anchors/work area) | À valider : `npm run tauri dev` (lancer une calibration, voir les waypoints se tracer)
 
 > Découvertes machine réelle (FluidNC v1.21, Maslow M4 @ 192.168.0.106) :
 > - WebSocket = `ws://<host>:81/` (PAS `/ws` → 404). Web port + 1.
@@ -42,11 +42,24 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 > Note : commandes Maslow (`$Maslow/...`) désactivées pendant un job en cours ; l'arrêt d'urgence en cours de coupe reste le Reset ⌃X realtime (toujours dispo).
 
 ## Phase 4 — Calibration Levenberg + visualisation
-- [ ] Workflow calibration piloté (retract → extend → calibrate)
-- [ ] Suivi des waypoints `[MSG:INFO: Waypoint N…]`
-- [ ] Visualisation toolpath/waypoints (canvas)
-- [ ] Écran config Maslow (anchors `kinematics/MaslowKinematics/*`, work area, tension)
-- [ ] (optionnel) Solver Levenberg-Marquardt client-side
+- [x] **State machine propre (source de vérité firmware)** : `maslow.rs::policy_for()` encode la matrice état→actions dérivée de `Calibration::requestStateChange()`. Émet `maslow-state` = `{ code, label, busy, allowed[] }`. Le front (`MaslowPanel`) ne fait que lire `allowed`/`busy` (plus aucune règle dupliquée). 4 tests policy. **Voir section dédiée ci-dessous.**
+- [x] Suivi des waypoints `[MSG:INFO: Waypoint N coordinates: X=.. Y=..]` → `maslow.rs::parse_waypoint` → event `maslow-waypoint` → store `waypoints` (reset auto en entrant en état 6).
+- [x] Visualisation waypoints (canvas auto-scalé, dernier point surligné, indicateur live) — `CalibrationView.svelte`. _Toolpath G-code (rendu du fichier .nc) : à faire._
+- [ ] Workflow calibration **guidé** (wizard retract → extend → takeSlack/calibrate avec étapes/prérequis) — boutons contextuels OK, wizard pas-à-pas à faire.
+- [ ] Écran config Maslow (anchors `kinematics/MaslowKinematics/*`, work area, tension) via `$/<key>`.
+- [ ] (optionnel) Solver Levenberg-Marquardt client-side.
+
+### State machine Maslow — matrice firmware (source : `Calibration::requestStateChange`)
+Tous les handlers de commande utilisent `anyState` ; le **vrai** gating est dans `requestStateChange(newState)`. Actions utilisateur → état cible → états source autorisés :
+- **Retract** → RETRACTING → **tout état**
+- **Extend** → EXTENDING → RETRACTED(2), EXTENDEDOUT(4)
+- **Take Slack** → TAKING_SLACK → EXTENDEDOUT(4), READY_TO_CUT(7)
+- **Calibrate** → CALIBRATION_IN_PROGRESS → EXTENDEDOUT(4), READY_TO_CUT(7), COMPUTING(9)
+- **Comply** → RELEASE_TENSION → UNKNOWN(0), EXTENDEDOUT(4), READY_TO_CUT(7), COMPUTING(9)
+- **Stop / E-Stop** → tout état
+- Transitions internes (non déclenchables par l'utilisateur) : RETRACTED←RETRACTING, EXTENDEDOUT←(EXTENDING/TAKING_SLACK/RELEASE_TENSION/COMPUTING/IN_PROGRESS), COMPUTING←IN_PROGRESS, READY_TO_CUT←(IN_PROGRESS/COMPUTING/TAKING_SLACK).
+
+> **À construire (demandé) — state machine robuste** : les changements d'état remontés par le firmware sont capricieux (rapports bruités/sauts). Notre `policy_for` filtre déjà les actions aux **états stables** (busy = 1/3/5/6/8/9 → Stop/E-Stop seulement) pour la prévisibilité. Reste à durcir : (1) valider les transitions entrantes contre le graphe firmware pour ignorer/lisser les rapports impossibles, (2) éventuel debounce des états transitoires. NB : ce n'est PAS une FSM qu'on pilote (le firmware possède l'état) — c'est une **fonction état→policy** + un validateur de transitions ; une lib FSM classique n'apporte rien ici (voir note lib dans le journal).
 
 ---
 
@@ -67,3 +80,6 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 - 2026-06-24 — Phase 2 (streaming+upload) : `streaming.rs` (Job char-counting, parsing gcode, persistance disque, 4 tests), intégration dans `connection.rs` (job possédé par `connection_loop`, ack→pump, interruption sur déco, commandes `stream_start/pause/resume/stop/saved`), `http_api.rs` (`upload_file`/`list_files`/`delete_file`), plugin dialog, store `job.ts` + `JobPanel.svelte` (barre de progression, reprise, upload). 8 tests Rust verts, svelte-check 0 erreur.
 - 2026-06-24 — Phase 2 (contrôle+SD) : `JogControls.svelte` (jog XYZ + home/unlock/zero/jog-cancel + realtime hold/resume/reset), `FileBrowser.svelte` (navigation SD, run/delete), layout 2 colonnes. Phase 2 complète (rename SD reporté). svelte-check 0 erreur.
 - 2026-06-24 — Phase 3 (Maslow state machine + courroies) : `maslow.rs` (parse MINFO + état, 4 tests), polling 1.5 s hors job dans `connection.rs`, events `maslow-info`/`maslow-state`, store `maslow.ts`, `MaslowPanel.svelte` (état + boutons contextuels + courroies). 12 tests Rust verts, svelte-check 0 erreur.
+- 2026-06-24 — Fix commandes Maslow : formes courtes `$MINFO`/`$GSTATE`/`$ALL`/`$EXT`/`$CMP`/`$TKSLK`/`$CAL`/`$STOP`/`$ESTOP` (les formes longues `$Maslow/...` renvoient error:3). Télémétrie validée sur la vraie machine.
+- 2026-06-24 — Phase 4 (state machine firmware + waypoints) : `policy_for()` (matrice dérivée de `requestStateChange`, 4 tests), `parse_waypoint` (1 test), events `maslow-state` enrichi + `maslow-waypoint`/`maslow-cal-complete`, `CalibrationView.svelte` (canvas waypoints). 15 tests Rust verts, svelte-check 0 erreur.
+  - **Note lib state machine** (demandée) : pas de lib FSM (Rust `statig`/`rust-fsm`, JS XState) car le firmware **possède** l'état — on ne pilote pas de transitions, on mappe `état→actions`. Une FSM classique suppose qu'on dirige les transitions ; ici c'est une table de policy + (à venir) un validateur de graphe. La capriciosité se règle par validation/lissage des rapports, pas par une lib.

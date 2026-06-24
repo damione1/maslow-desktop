@@ -2,12 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
   import { jobProgress } from "$lib/stores/job";
-  import {
-    maslowInfo,
-    maslowState,
-    STATE_NAMES,
-    BUSY_STATES,
-  } from "$lib/stores/maslow";
+  import { maslowInfo, maslowState } from "$lib/stores/maslow";
 
   const connected = $derived($wsState === "connected");
   const jobActive = $derived(
@@ -15,21 +10,22 @@
       $jobProgress.state !== "done" &&
       $jobProgress.state !== "error",
   );
-  const state = $derived($maslowState);
-  const busy = $derived(state !== null && BUSY_STATES.has(state));
+  const policy = $derived($maslowState);
+  const busy = $derived(policy?.busy ?? false);
   const info = $derived($maslowInfo);
 
   // Base gate: connected, not streaming a job.
   const ready = $derived(connected && !jobActive);
 
-  // Contextual enablement mirroring maslow.js updateDynamicButtons().
-  const inState = (set: number[]) =>
-    ready && state !== null && set.includes(state);
-  const canRetract = $derived(inState([0, 2, 4, 7]));
-  const canExtend = $derived(inState([0, 2, 4]));
-  const canComply = $derived(inState([0, 2, 4]));
-  const canTakeSlack = $derived(inState([4]));
-  const canCalibrate = $derived(inState([4]));
+  // Allowed actions come straight from the Rust state machine (single source
+  // of truth, derived from the firmware transition guards).
+  const can = (action: string) =>
+    ready && (policy?.allowed.includes(action) ?? false);
+  const canRetract = $derived(can("retract"));
+  const canExtend = $derived(can("extend"));
+  const canComply = $derived(can("comply"));
+  const canTakeSlack = $derived(can("takeSlack"));
+  const canCalibrate = $derived(can("calibrate"));
 
   // Short command names the firmware accepts (the embedded UI uses these;
   // the long `$Maslow/...` forms are rejected with error:3).
@@ -69,8 +65,8 @@
 <section class="maslow">
   <header>
     <span>Maslow</span>
-    <span class="state" class:busy class:ready={state === 7}>
-      {state !== null ? (STATE_NAMES[state] ?? "Unknown") : "—"}
+    <span class="state" class:busy class:ready={policy?.code === 7}>
+      {policy?.label ?? "—"}
     </span>
     {#if info}
       <span class="flags">
@@ -110,8 +106,8 @@
   </div>
 
   <div class="actions stop-row">
-    <button class="warn" onclick={() => action("stop")} disabled={!ready}>Stop</button>
-    <button class="danger" onclick={() => action("estop")} disabled={!ready}>E-Stop</button>
+    <button class="warn" onclick={() => action("stop")} disabled={!can("stop")}>Stop</button>
+    <button class="danger" onclick={() => action("estop")} disabled={!can("estop")}>E-Stop</button>
   </div>
 </section>
 
