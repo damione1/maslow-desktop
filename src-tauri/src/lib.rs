@@ -1,3 +1,4 @@
+mod calibration;
 mod connection;
 mod grbl;
 mod http_api;
