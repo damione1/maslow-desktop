@@ -148,6 +148,8 @@ async fn run_socket(
     let mut buf = String::new();
     let mut status_tick = tokio::time::interval(Duration::from_millis(250));
     let mut last_activity = Instant::now();
+    // FluidNC only emits WCO periodically; cache it so work position stays stable.
+    let mut wco_cache: Vec<f32> = Vec::new();
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -164,13 +166,13 @@ async fn run_socket(
                             // Binary frames carry the newline-delimited GRBL stream.
                             Message::Binary(b) => {
                                 buf.push_str(&String::from_utf8_lossy(&b));
-                                drain_lines(app, &mut buf);
+                                drain_lines(app, &mut buf, &mut wco_cache);
                             }
                             // Text frames carry control messages (CURRENT_ID, PING…)
                             // and, on some firmwares, complete GRBL lines.
                             Message::Text(t) => {
                                 for raw in t.split('\n') {
-                                    dispatch_line(app, raw.trim_end_matches('\r'));
+                                    dispatch_line(app, raw.trim_end_matches('\r'), &mut wco_cache);
                                 }
                             }
                             Message::Close(_) => return Ok(()),
@@ -210,10 +212,10 @@ async fn run_socket(
 }
 
 /// Split accumulated buffer into complete lines and dispatch each.
-fn drain_lines(app: &AppHandle, buf: &mut String) {
+fn drain_lines(app: &AppHandle, buf: &mut String, wco_cache: &mut Vec<f32>) {
     while let Some(idx) = buf.find('\n') {
         let line: String = buf.drain(..=idx).collect();
-        dispatch_line(app, line.trim_end_matches(['\r', '\n']));
+        dispatch_line(app, line.trim_end_matches(['\r', '\n']), wco_cache);
     }
 }
 
@@ -228,11 +230,26 @@ fn is_control(line: &str) -> bool {
 }
 
 /// Classify and emit a single complete line.
-fn dispatch_line(app: &AppHandle, line: &str) {
+fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
     if line.is_empty() {
         return;
     }
-    if let Some(status) = grbl::parse_status_report(line) {
+    if let Some(mut status) = grbl::parse_status_report(line) {
+        // Apply the persistent WCO so work position is stable even on reports
+        // that omit WCO (FluidNC sends it only periodically).
+        if !status.wco.is_empty() {
+            *wco_cache = status.wco.clone();
+        } else if !wco_cache.is_empty() {
+            status.wco = wco_cache.clone();
+        }
+        if !status.wco.is_empty() && !status.mpos.is_empty() {
+            status.wpos = status
+                .mpos
+                .iter()
+                .zip(&status.wco)
+                .map(|(m, o)| m - o)
+                .collect();
+        }
         let _ = app.emit("machine-status", &status);
         return;
     }
