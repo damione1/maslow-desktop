@@ -1,23 +1,35 @@
 // WebSocket connection manager for the Maslow / FluidNC machine.
-// Connects to ws://<host>/ws (subprotocol "arduino"), mirroring socket.js:
+// Connects to ws://<host>:81/ (subprotocol "arduino"), mirroring socket.js:
 //   - Binary frames carry the GRBL stream (lines terminated by '\n').
 //   - Text frames carry control messages "key:value" (CURRENT_ID, PING, ...).
+//
+// G-code streaming lives here too: the active `Job` is owned by the connection
+// supervisor (`connection_loop`) so it survives automatic reconnects, while the
+// streaming module persists its progress to disk for full app-restart recovery.
+//
 // Emits Tauri events to the frontend:
-//   "ws-state"      -> "connected" | "disconnected"
-//   "grbl-line"     -> raw line string (console)
-//   "machine-status"-> MachineStatus JSON (parsed status report)
-//   "ws-control"    -> control message string
+//   "ws-state"       -> "connected" | "disconnected"
+//   "grbl-line"      -> raw line string (console)
+//   "machine-status" -> MachineStatus JSON (parsed status report)
+//   "ws-control"     -> control message string
+//   "stream-progress"-> streaming::Progress JSON
 
 use crate::grbl;
+use crate::streaming::{self, Job};
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 
 /// Commands the frontend can push down to the live socket task.
 pub enum WsCommand {
@@ -25,6 +37,15 @@ pub enum WsCommand {
     Line(String),
     /// A single realtime character (e.g. '?', '!', '~', 0x18) sent as-is.
     Realtime(u8),
+    /// Start streaming a parsed G-code file from `start_index`.
+    StartJob {
+        lines: Vec<String>,
+        path: String,
+        start_index: usize,
+    },
+    PauseJob,
+    ResumeJob,
+    StopJob,
 }
 
 #[derive(Default)]
@@ -33,8 +54,6 @@ pub struct ConnState {
     /// Running flag of the live connection task (a fresh one per connection,
     /// so superseded tasks shut down permanently instead of reconnecting).
     pub current: Mutex<Option<Arc<AtomicBool>>>,
-    /// Latest CURRENT_ID reported by the firmware (PAGEID for /command).
-    pub page_id: Mutex<String>,
 }
 
 /// Build the WebSocket URL. FluidNC serves the socket on (web port + 1),
@@ -45,7 +64,6 @@ fn ws_url(host: &str) -> String {
         .trim_end_matches('/')
         .trim_start_matches("http://")
         .trim_start_matches("https://");
-    // If the user already specified an explicit port, respect it.
     if h.contains(':') {
         format!("ws://{}/", h)
     } else {
@@ -56,10 +74,9 @@ fn ws_url(host: &str) -> String {
 #[tauri::command]
 pub async fn connect_ws(
     app: AppHandle,
-    state: tauri::State<'_, ConnState>,
+    state: State<'_, ConnState>,
     host: String,
 ) -> Result<(), String> {
-    // Stop any previous connection task permanently.
     if let Some(flag) = state.current.lock().await.take() {
         flag.store(false, Ordering::SeqCst);
     }
@@ -78,7 +95,7 @@ pub async fn connect_ws(
 }
 
 #[tauri::command]
-pub async fn disconnect_ws(state: tauri::State<'_, ConnState>) -> Result<(), String> {
+pub async fn disconnect_ws(state: State<'_, ConnState>) -> Result<(), String> {
     if let Some(flag) = state.current.lock().await.take() {
         flag.store(false, Ordering::SeqCst);
     }
@@ -86,22 +103,65 @@ pub async fn disconnect_ws(state: tauri::State<'_, ConnState>) -> Result<(), Str
     Ok(())
 }
 
-#[tauri::command]
-pub async fn send_line(state: tauri::State<'_, ConnState>, line: String) -> Result<(), String> {
+async fn send_cmd(state: &State<'_, ConnState>, cmd: WsCommand) -> Result<(), String> {
     let guard = state.tx.lock().await;
     match guard.as_ref() {
-        Some(tx) => tx.send(WsCommand::Line(line)).map_err(|e| e.to_string()),
+        Some(tx) => tx.send(cmd).map_err(|e| e.to_string()),
         None => Err("not connected".into()),
     }
 }
 
 #[tauri::command]
-pub async fn send_realtime(state: tauri::State<'_, ConnState>, byte: u8) -> Result<(), String> {
-    let guard = state.tx.lock().await;
-    match guard.as_ref() {
-        Some(tx) => tx.send(WsCommand::Realtime(byte)).map_err(|e| e.to_string()),
-        None => Err("not connected".into()),
-    }
+pub async fn send_line(state: State<'_, ConnState>, line: String) -> Result<(), String> {
+    send_cmd(&state, WsCommand::Line(line)).await
+}
+
+#[tauri::command]
+pub async fn send_realtime(state: State<'_, ConnState>, byte: u8) -> Result<(), String> {
+    send_cmd(&state, WsCommand::Realtime(byte)).await
+}
+
+/// Begin streaming a G-code file. Loaded and parsed here so the frontend only
+/// passes a path. `start_index` lets a previous job resume mid-file.
+#[tauri::command]
+pub async fn stream_start(
+    state: State<'_, ConnState>,
+    path: String,
+    start_index: usize,
+) -> Result<usize, String> {
+    let lines = streaming::load_gcode(&path)?;
+    let total = lines.len();
+    send_cmd(
+        &state,
+        WsCommand::StartJob {
+            lines,
+            path,
+            start_index,
+        },
+    )
+    .await?;
+    Ok(total)
+}
+
+#[tauri::command]
+pub async fn stream_pause(state: State<'_, ConnState>) -> Result<(), String> {
+    send_cmd(&state, WsCommand::PauseJob).await
+}
+
+#[tauri::command]
+pub async fn stream_resume(state: State<'_, ConnState>) -> Result<(), String> {
+    send_cmd(&state, WsCommand::ResumeJob).await
+}
+
+#[tauri::command]
+pub async fn stream_stop(state: State<'_, ConnState>) -> Result<(), String> {
+    send_cmd(&state, WsCommand::StopJob).await
+}
+
+/// Return a previously interrupted job persisted on disk, if resumable.
+#[tauri::command]
+pub fn stream_saved(app: AppHandle) -> Option<streaming::SavedJob> {
+    streaming::read_saved(&app)
 }
 
 async fn connection_loop(
@@ -110,21 +170,48 @@ async fn connection_loop(
     mut rx: UnboundedReceiver<WsCommand>,
     running: Arc<AtomicBool>,
 ) {
+    // The job lives across reconnects: a dropped socket pauses it, the next
+    // socket can resume on the user's request.
+    let mut job: Option<Job> = None;
+
     while running.load(Ordering::SeqCst) {
-        match run_socket(&app, &url, &mut rx, &running).await {
+        match run_socket(&app, &url, &mut rx, &running, &mut job).await {
             Ok(_) => {}
             Err(e) => {
                 let _ = app.emit("ws-error", e);
             }
         }
         let _ = app.emit("ws-state", "disconnected");
+
+        // A live job whose socket just dropped is now interrupted: freeze it at
+        // the last acknowledged line (firmware buffer state is unknown).
+        if let Some(j) = job.as_mut() {
+            if j.active() {
+                j.invalidate_inflight();
+                streaming::persist(&app, j, "interrupted");
+                streaming::emit_progress(&app, &job, Some("interrupted"));
+            }
+        }
+
         if !running.load(Ordering::SeqCst) {
             break;
         }
-        // Retry every 3s, like socket.js.
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     let _ = app.emit("ws-state", "disconnected");
+}
+
+/// Send as many queued G-code lines as the firmware RX buffer allows.
+async fn pump(write: &mut WsSink, job: &mut Option<Job>) -> Result<(), String> {
+    if let Some(j) = job.as_mut() {
+        while let Some(line) = j.next_line() {
+            write
+                .send(Message::Text(line))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 async fn run_socket(
@@ -132,6 +219,7 @@ async fn run_socket(
     url: &str,
     rx: &mut UnboundedReceiver<WsCommand>,
     running: &Arc<AtomicBool>,
+    job: &mut Option<Job>,
 ) -> Result<(), String> {
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     request
@@ -148,7 +236,6 @@ async fn run_socket(
     let mut buf = String::new();
     let mut status_tick = tokio::time::interval(Duration::from_millis(250));
     let mut last_activity = Instant::now();
-    // FluidNC only emits WCO periodically; cache it so work position stays stable.
     let mut wco_cache: Vec<f32> = Vec::new();
 
     loop {
@@ -163,16 +250,18 @@ async fn run_socket(
                     Some(Ok(msg)) => {
                         last_activity = Instant::now();
                         match msg {
-                            // Binary frames carry the newline-delimited GRBL stream.
                             Message::Binary(b) => {
                                 buf.push_str(&String::from_utf8_lossy(&b));
-                                drain_lines(app, &mut buf, &mut wco_cache);
+                                while let Some(idx) = buf.find('\n') {
+                                    let raw: String = buf.drain(..=idx).collect();
+                                    let line = raw.trim_end_matches(['\r', '\n']).to_string();
+                                    handle_incoming(app, &line, &mut wco_cache, &mut write, job).await?;
+                                }
                             }
-                            // Text frames carry control messages (CURRENT_ID, PING…)
-                            // and, on some firmwares, complete GRBL lines.
                             Message::Text(t) => {
                                 for raw in t.split('\n') {
-                                    dispatch_line(app, raw.trim_end_matches('\r'), &mut wco_cache);
+                                    let line = raw.trim_end_matches('\r').to_string();
+                                    handle_incoming(app, &line, &mut wco_cache, &mut write, job).await?;
                                 }
                             }
                             Message::Close(_) => return Ok(()),
@@ -186,23 +275,65 @@ async fn run_socket(
             cmd = rx.recv() => {
                 match cmd {
                     Some(WsCommand::Line(mut l)) => {
-                        if !l.ends_with('\n') { l.push('\n'); }
-                        write.send(Message::Text(l)).await.map_err(|e| e.to_string())?;
+                        if job.as_ref().map_or(false, |j| j.active()) {
+                            let _ = app.emit("grbl-line",
+                                "[blocked] stop the job to send manual commands".to_string());
+                        } else {
+                            if !l.ends_with('\n') { l.push('\n'); }
+                            write.send(Message::Text(l)).await.map_err(|e| e.to_string())?;
+                        }
                     }
                     Some(WsCommand::Realtime(b)) => {
                         write.send(Message::Binary(vec![b])).await.map_err(|e| e.to_string())?;
+                        // Ctrl-X soft reset flushes the firmware buffer: any active
+                        // job's in-flight tracking is now stale.
+                        if b == 0x18 {
+                            if let Some(j) = job.as_mut() {
+                                j.invalidate_inflight();
+                                streaming::persist(app, j, "interrupted");
+                            }
+                            streaming::emit_progress(app, job, Some("interrupted"));
+                        }
+                    }
+                    Some(WsCommand::StartJob { lines, path, start_index }) => {
+                        *job = Some(Job::new(path, lines, start_index));
+                        if let Some(j) = job.as_mut() {
+                            streaming::persist(app, j, "running");
+                        }
+                        pump(&mut write, job).await?;
+                        streaming::emit_progress(app, job, None);
+                    }
+                    Some(WsCommand::PauseJob) => {
+                        if let Some(j) = job.as_mut() {
+                            j.paused = true;
+                            streaming::persist(app, j, "interrupted");
+                        }
+                        // Feed hold so motion stops promptly, not just queueing.
+                        let _ = write.send(Message::Binary(vec![b'!'])).await;
+                        streaming::emit_progress(app, job, None);
+                    }
+                    Some(WsCommand::ResumeJob) => {
+                        if let Some(j) = job.as_mut() {
+                            j.paused = false;
+                        }
+                        // Release a possible feed hold before refilling the buffer.
+                        let _ = write.send(Message::Binary(vec![b'~'])).await;
+                        pump(&mut write, job).await?;
+                        streaming::emit_progress(app, job, None);
+                    }
+                    Some(WsCommand::StopJob) => {
+                        streaming::clear_saved(app);
+                        *job = None;
+                        streaming::emit_progress(app, job, None);
                     }
                     None => {
-                        // sender dropped -> disconnect requested
                         let _ = write.send(Message::Close(None)).await;
                         return Ok(());
                     }
                 }
             }
             _ = status_tick.tick() => {
-                // Poll for a realtime status report.
                 write.send(Message::Binary(vec![b'?'])).await.map_err(|e| e.to_string())?;
-                // Watchdog: no traffic for 20s -> force reconnect (socket.js parity).
                 if last_activity.elapsed() > Duration::from_secs(20) {
                     return Err("watchdog: no activity for 20s".into());
                 }
@@ -211,11 +342,53 @@ async fn run_socket(
     }
 }
 
-/// Split accumulated buffer into complete lines and dispatch each.
-fn drain_lines(app: &AppHandle, buf: &mut String, wco_cache: &mut Vec<f32>) {
-    while let Some(idx) = buf.find('\n') {
-        let line: String = buf.drain(..=idx).collect();
-        dispatch_line(app, line.trim_end_matches(['\r', '\n']), wco_cache);
+/// Classify one incoming line: feed acknowledgements to the active job (with
+/// char-counting), then emit it for the console / status panel.
+async fn handle_incoming(
+    app: &AppHandle,
+    line: &str,
+    wco_cache: &mut Vec<f32>,
+    write: &mut WsSink,
+    job: &mut Option<Job>,
+) -> Result<(), String> {
+    if let Some(is_error) = ack_kind(line) {
+        if job.as_ref().map_or(false, |j| j.active()) {
+            let done = job.as_mut().map(|j| j.ack(is_error)).unwrap_or(false);
+            if let Some(j) = job.as_mut() {
+                streaming::maybe_persist(app, j);
+            }
+            // Buffer space may have freed up: keep the pipe full.
+            pump(write, job).await?;
+            if done {
+                let final_state = job
+                    .as_ref()
+                    .map(|j| if j.errors > 0 { "error" } else { "done" })
+                    .unwrap_or("done");
+                if let Some(j) = job.as_mut() {
+                    streaming::persist(app, j, final_state);
+                }
+                streaming::emit_progress(app, job, None);
+                streaming::clear_saved(app);
+                *job = None;
+            } else {
+                streaming::emit_progress(app, job, None);
+            }
+        }
+    }
+
+    dispatch_line(app, line, wco_cache);
+    Ok(())
+}
+
+/// Recognise a GRBL acknowledgement line. `Some(true)` = error, `Some(false)` = ok.
+fn ack_kind(line: &str) -> Option<bool> {
+    let t = line.trim();
+    if t == "ok" {
+        Some(false)
+    } else if t.starts_with("error") {
+        Some(true)
+    } else {
+        None
     }
 }
 
@@ -229,14 +402,12 @@ fn is_control(line: &str) -> bool {
         )
 }
 
-/// Classify and emit a single complete line.
+/// Classify and emit a single complete line (console + status).
 fn dispatch_line(app: &AppHandle, line: &str, wco_cache: &mut Vec<f32>) {
     if line.is_empty() {
         return;
     }
     if let Some(mut status) = grbl::parse_status_report(line) {
-        // Apply the persistent WCO so work position is stable even on reports
-        // that omit WCO (FluidNC sends it only periodically).
         if !status.wco.is_empty() {
             *wco_cache = status.wco.clone();
         } else if !wco_cache.is_empty() {

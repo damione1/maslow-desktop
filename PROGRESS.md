@@ -4,7 +4,7 @@ App desktop Mac/Windows (Rust + Tauri + SvelteKit) qui pilote la Maslow M4 via
 l'API réseau du firmware (HTTP + WebSocket). Réimplémentation moderne de l'UI web
 embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP32.
 
-**État courant** : Phase 1 terminée (code) | Prochaine étape : Phase 2 — jog + realtime + fichiers SD | À valider : `npm run tauri dev` connecté à 192.168.0.106
+**État courant** : Phase 2 en cours — streaming G-code résumable + upload SD faits (code) | Prochaine étape : JogControls + boutons realtime (hold/resume/reset) + navigateur fichiers SD | À valider : `npm run tauri dev` connecté à 192.168.0.106 (streamer un .nc, couper le wifi, vérifier reprise)
 
 > Découvertes machine réelle (FluidNC v1.21, Maslow M4 @ 192.168.0.106) :
 > - WebSocket = `ws://<host>:81/` (PAS `/ws` → 404). Web port + 1.
@@ -29,9 +29,9 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 
 ## Phase 2 — Contrôle + fichiers
 - [ ] JogControls (X/Y/Z, home `$H`, unlock `$X`)
-- [ ] Realtime hold `!` / resume `~` / reset `0x18`
-- [ ] Streaming G-code (buffer protocol, ~40 cmd en vol)
-- [ ] Gestionnaire fichiers SD (list/upload/delete/rename)
+- [~] Realtime hold `!` / resume `~` / reset `0x18` (backend `send_realtime` OK + utilisé par pause/resume du job ; UI dédiée à faire)
+- [x] Streaming G-code (char-counting GRBL 127 o) **+ résumable** : job possédé par le superviseur (survit aux reconnexions auto), progression persistée sur disque (`current_job.json`) → reprise après crash/déco via `stream_saved` → `stream_start(start_index=acked)`. Console verrouillée pendant un job (sinon les `ok` fausseraient le compteur). Tests Rust : char-counting, ack/complete, resume index, parsing gcode.
+- [~] Gestionnaire fichiers SD : `upload_file` (POST multipart ESP3D `path`/`<full>S`/`myfile[]`), `list_files`, `delete_file` (backend OK) + bouton Upload UI. Navigateur SD complet (liste/rename/delete dans l'UI) à faire.
 
 ## Phase 3 — Maslow state machine + courroies
 - [ ] Polling MINFO (`$Maslow/getInfo`) + parsing
@@ -54,3 +54,4 @@ embarquée (`ESP3D-WEBUI`), pour s'affranchir des contraintes mémoire de l'ESP3
 ## Journal
 - 2026-06-24 — Phase 0 : scaffold Tauri+SvelteKit, deps Rust, écran connexion (`ping_machine`). Connexion validée sur 192.168.0.106.
 - 2026-06-24 — Phase 1 : `grbl.rs` (parser status, 4 tests), `connection.rs` (WS manager port 81, reconnect/watchdog), stores + StatusPanel + Console. Protocole confirmé via websocat sur la vraie machine.
+- 2026-06-24 — Phase 2 (streaming+upload) : `streaming.rs` (Job char-counting, parsing gcode, persistance disque, 4 tests), intégration dans `connection.rs` (job possédé par `connection_loop`, ack→pump, interruption sur déco, commandes `stream_start/pause/resume/stop/saved`), `http_api.rs` (`upload_file`/`list_files`/`delete_file`), plugin dialog, store `job.ts` + `JobPanel.svelte` (barre de progression, reprise, upload). 8 tests Rust verts, svelte-check 0 erreur.
