@@ -99,6 +99,14 @@ interface Discord {
   to_label: string;
 }
 
+/** One editable leaf of the full FluidNC config tree (`$CD` flattened). `path`
+ * is the `/`-joined key that `$/<path>=<value>` expects. */
+export interface ConfigEntry {
+  path: string;
+  value: string;
+  kind: "bool" | "int" | "float" | "text";
+}
+
 /** One raw belt-length measurement at a calibration waypoint (mm). */
 export interface Measurement {
   tl: number;
@@ -197,6 +205,17 @@ export function toggleExcluded(index: number): void {
   });
 }
 
+/** The full FluidNC config tree (every editable leaf), or null until read. */
+export const fullConfig = writable<ConfigEntry[] | null>(null);
+
+/** Dump and flatten the entire FluidNC machine config (`$CD`). Heavy; only the
+ * config screen triggers it, never on connect. */
+export async function refreshFullConfig(): Promise<void> {
+  const host = get(connection).host;
+  if (!host) return;
+  fullConfig.set(await invoke<ConfigEntry[]>("read_full_config", { host }));
+}
+
 /** Read the full Maslow configuration (anchors + work area + tension) from the
  * firmware over HTTP. Heavier than `refreshAnchors` (several `$/` reads), so it
  * is only triggered by the config screen, not on every connect. */
@@ -288,6 +307,7 @@ export async function initMaslowListeners(): Promise<void> {
       actionPolicy.set(null);
       anchors.set(null);
       maslowConfig.set(null);
+      fullConfig.set(null);
       measurements.set([]);
       firmwareFit.set(null);
       firmwareAnchors.set(null);

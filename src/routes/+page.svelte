@@ -20,6 +20,7 @@
   import CalibrationView from "$lib/components/CalibrationView.svelte";
   import CalibrationSolver from "$lib/components/CalibrationSolver.svelte";
   import MaslowConfig from "$lib/components/MaslowConfig.svelte";
+  import FluidNCConfig from "$lib/components/FluidNCConfig.svelte";
   import JogControls from "$lib/components/JogControls.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
@@ -115,6 +116,7 @@
       </div>
       <div class="panel" class:active={$activeTab === "config"}>
         <MaslowConfig />
+        <FluidNCConfig />
       </div>
     </div>
   {/snippet}
