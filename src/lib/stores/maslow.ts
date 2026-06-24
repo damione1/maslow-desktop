@@ -99,6 +99,52 @@ interface Discord {
   to_label: string;
 }
 
+/** One raw belt-length measurement at a calibration waypoint (mm). */
+export interface Measurement {
+  tl: number;
+  tr: number;
+  bl: number;
+  br: number;
+}
+
+/** Quality metrics of a solved fit (mirrors Rust Fitness / firmware). */
+export interface Fitness {
+  rms: number;
+  max_residual: number;
+  per_anchor: [number, number, number, number];
+  converged: boolean;
+}
+
+/** Fitness numbers the firmware logs after its own recompute. */
+export interface FirmwareFit {
+  rms: number;
+  max_residual: number;
+  per_anchor: [number, number, number, number];
+  converged: boolean;
+}
+
+/** Reduced 5-parameter anchor estimate (BL at origin, brY=0). */
+export interface AnchorParams {
+  tl_x: number;
+  tl_y: number;
+  tr_x: number;
+  tr_y: number;
+  br_x: number;
+}
+
+/** Result of a client-side solve (mirrors Rust SolveResult). */
+export interface SolveResult {
+  solver: string;
+  ok: boolean;
+  anchors: Anchors;
+  params: AnchorParams;
+  fitness: Fitness;
+  sled: { x: number; y: number }[];
+  residuals: [number, number, number, number][];
+  kept_indices: number[];
+  gate_error: string | null;
+}
+
 /** Latest MINFO telemetry, or null until first poll. */
 export const maslowInfo = writable<MaslowInfo | null>(null);
 /** Current calibration state policy, or null until known. */
@@ -113,6 +159,43 @@ export const actionPolicy = writable<ActionPolicy | null>(null);
 export const anchors = writable<Anchors | null>(null);
 /** Full editable Maslow config, or null until first read of the config screen. */
 export const maslowConfig = writable<MaslowConfig | null>(null);
+
+/** Raw belt measurements from the last `CLBM:` log, input to the local solver. */
+export const measurements = writable<Measurement[]>([]);
+/** The firmware's own fit metrics from the last recompute (for comparison). */
+export const firmwareFit = writable<FirmwareFit | null>(null);
+/** The anchors the firmware computed on-device (for comparison). */
+export const firmwareAnchors = writable<AnchorParams | null>(null);
+/** Result of the last client-side solve, or null. */
+export const localSolve = writable<SolveResult | null>(null);
+/** Original waypoint indices excluded from the next solve (what-if). */
+export const excludedWaypoints = writable<Set<number>>(new Set());
+
+/** Run the client-side solver over the current measurements, excluding the
+ * given waypoints, seeded from the current config anchors. Pure compute. */
+export async function solveLocally(): Promise<void> {
+  const ms = get(measurements);
+  if (!ms.length) return;
+  const exclude = [...get(excludedWaypoints)];
+  const initial = get(anchors); // null → Rust falls back to firmware defaults
+  const result = await invoke<SolveResult>("solve_calibration", {
+    measurements: ms,
+    initial,
+    exclude,
+    solver: "levenberg-marquardt",
+  });
+  localSolve.set(result);
+}
+
+/** Toggle a waypoint in/out of the exclusion set without re-solving. */
+export function toggleExcluded(index: number): void {
+  excludedWaypoints.update((set) => {
+    const next = new Set(set);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    return next;
+  });
+}
 
 /** Read the full Maslow configuration (anchors + work area + tension) from the
  * firmware over HTTP. Heavier than `refreshAnchors` (several `$/` reads), so it
@@ -146,10 +229,26 @@ export async function initMaslowListeners(): Promise<void> {
 
   await listen<StatePolicy>("maslow-state", (e) => {
     const policy = e.payload;
-    // Entering calibration starts a fresh waypoint run.
-    if (policy.code === 6) waypoints.set([]);
+    // Entering calibration starts a fresh waypoint run, and invalidates any
+    // measurements/solve from a previous run.
+    if (policy.code === 6) {
+      waypoints.set([]);
+      measurements.set([]);
+      firmwareFit.set(null);
+      firmwareAnchors.set(null);
+      localSolve.set(null);
+      excludedWaypoints.set(new Set());
+    }
     maslowState.set(policy);
   });
+
+  await listen<Measurement[]>("cal-measurements", (e) => {
+    measurements.set(e.payload);
+  });
+  await listen<FirmwareFit>("cal-firmware-fit", (e) => firmwareFit.set(e.payload));
+  await listen<AnchorParams>("cal-firmware-anchors", (e) =>
+    firmwareAnchors.set(e.payload),
+  );
 
   await listen<Waypoint>("maslow-waypoint", (e) => {
     waypoints.update((list) => {
@@ -189,6 +288,11 @@ export async function initMaslowListeners(): Promise<void> {
       actionPolicy.set(null);
       anchors.set(null);
       maslowConfig.set(null);
+      measurements.set([]);
+      firmwareFit.set(null);
+      firmwareAnchors.set(null);
+      localSolve.set(null);
+      excludedWaypoints.set(new Set());
     } else if (e.payload === "connected") {
       // Learn the calibration status as soon as we are live.
       refreshAnchors();
