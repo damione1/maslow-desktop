@@ -1,6 +1,7 @@
 mod connection;
 mod grbl;
 mod http_api;
+mod maslow;
 mod streaming;
 
 use connection::ConnState;

@@ -40,6 +40,8 @@ export async function initMachineListeners(): Promise<void> {
     const line = e.payload;
     // Status reports are surfaced via machine-status; skip them in the console.
     if (line.startsWith("<")) return;
+    // Bare `ok` acks are noise (telemetry polling emits them ~every 1.5s).
+    if (line === "ok") return;
     consoleLines.update((lines) => {
       lines.push(line);
       return lines.length > MAX_CONSOLE_LINES ? lines.slice(-MAX_CONSOLE_LINES) : lines;

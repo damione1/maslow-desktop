@@ -4,7 +4,9 @@
   import { connection, persistHost } from "$lib/stores/connection";
   import { wsState, initMachineListeners } from "$lib/stores/machine";
   import { initJobListeners } from "$lib/stores/job";
+  import { initMaslowListeners } from "$lib/stores/maslow";
   import StatusPanel from "$lib/components/StatusPanel.svelte";
+  import MaslowPanel from "$lib/components/MaslowPanel.svelte";
   import JogControls from "$lib/components/JogControls.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
@@ -15,6 +17,7 @@
   onMount(() => {
     initMachineListeners();
     initJobListeners();
+    initMaslowListeners();
   });
 
   async function connect() {
@@ -51,6 +54,7 @@
     <div class="cols">
       <div class="col">
         <StatusPanel />
+        <MaslowPanel />
         <JogControls />
       </div>
       <div class="col">
