@@ -14,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(ConnState::default())
         .invoke_handler(tauri::generate_handler![
+            calibration::solve_calibration,
             http_api::ping_machine,
             http_api::read_maslow_anchors,
             http_api::read_maslow_config,

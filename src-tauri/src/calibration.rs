@@ -119,6 +119,10 @@ pub struct SolveResult {
     pub sled: Vec<Sled>,
     /// Per-measurement residuals [tl, tr, bl, br] of the best params, mm.
     pub residuals: Vec<[f64; 4]>,
+    /// Original measurement indices the solve actually used, in order. Equal to
+    /// `0..n` unless the caller excluded waypoints (what-if); lets the UI map
+    /// `sled`/`residuals` back to the original waypoint numbers.
+    pub kept_indices: Vec<usize>,
     pub gate_error: Option<String>,
 }
 
@@ -190,8 +194,9 @@ pub fn parse_clbm(line: &str) -> Option<Vec<Measurement>> {
     }
 }
 
-/// Fitness numbers the firmware logs after a recompute, used as a test oracle.
-#[derive(Clone, Debug, PartialEq)]
+/// Fitness numbers the firmware logs after a recompute, used as a test oracle
+/// and surfaced to the UI for comparison against the local solve.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FirmwareFit {
     pub rms: f64,
     pub max_residual: f64,
@@ -673,6 +678,7 @@ fn lm_solve(measurements: &[Measurement], initial: AnchorParams) -> SolveResult 
             },
             sled: Vec::new(),
             residuals: Vec::new(),
+            kept_indices: Vec::new(),
             gate_error: Some("no measurements available".into()),
         };
     }
@@ -803,8 +809,39 @@ fn lm_solve(measurements: &[Measurement], initial: AnchorParams) -> SolveResult 
         fitness,
         sled,
         residuals,
+        kept_indices: (0..n).collect(),
         gate_error,
     }
+}
+
+/// Tauri command: solve anchors from belt measurements, optionally excluding a
+/// set of suspect waypoints (what-if), starting from the current config anchors.
+/// Pure compute — no machine I/O.
+#[tauri::command]
+pub fn solve_calibration(
+    measurements: Vec<Measurement>,
+    initial: Option<Anchors>,
+    exclude: Vec<usize>,
+    solver: Option<String>,
+) -> Result<SolveResult, String> {
+    let solver_name = solver.as_deref().unwrap_or("levenberg-marquardt");
+    let algo = solver_by_name(solver_name)
+        .ok_or_else(|| format!("unknown solver: {solver_name}"))?;
+
+    let initial_params = initial
+        .as_ref()
+        .map(AnchorParams::from)
+        .unwrap_or_else(AnchorParams::firmware_default);
+
+    let kept_indices: Vec<usize> = (0..measurements.len())
+        .filter(|i| !exclude.contains(i))
+        .collect();
+    let kept: Vec<Measurement> = kept_indices.iter().map(|&i| measurements[i]).collect();
+
+    let mut result = algo.solve(&kept, initial_params);
+    result.solver = algo.name().to_string();
+    result.kept_indices = kept_indices;
+    Ok(result)
 }
 
 #[cfg(test)]
