@@ -1,121 +1,87 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { connection, persistHost } from "$lib/stores/connection";
-
-  interface PingResult {
-    reachable: boolean;
-    status: number;
-    info: string;
-  }
+  import { wsState, initMachineListeners } from "$lib/stores/machine";
+  import StatusPanel from "$lib/components/StatusPanel.svelte";
+  import Console from "$lib/components/Console.svelte";
 
   let host = $state($connection.host);
 
-  async function testConnection(event: Event) {
-    event.preventDefault();
+  onMount(() => {
+    initMachineListeners();
+  });
+
+  async function connect() {
     persistHost(host);
-    connection.update((c) => ({ ...c, host, state: "testing", error: "" }));
-    try {
-      const res = await invoke<PingResult>("ping_machine", { host });
-      if (res.reachable) {
-        connection.set({ host, state: "connected", info: res.info, error: "" });
-      } else {
-        connection.set({
-          host,
-          state: "disconnected",
-          info: "",
-          error: res.info || `HTTP ${res.status}`,
-        });
-      }
-    } catch (e) {
-      connection.set({ host, state: "disconnected", info: "", error: String(e) });
-    }
+    connection.update((c) => ({ ...c, host }));
+    await invoke("connect_ws", { host });
+  }
+
+  async function disconnect() {
+    await invoke("disconnect_ws");
   }
 </script>
 
-<main class="container">
-  <h1>Maslow Desktop</h1>
-  <p class="subtitle">Connexion à la machine</p>
-
-  <form class="row" onsubmit={testConnection}>
+<div class="app">
+  <header class="topbar">
+    <strong class="brand">Maslow Desktop</strong>
     <input
-      placeholder="maslow.local ou IP"
+      class="host"
+      placeholder="maslow.local or IP"
       bind:value={host}
       autocomplete="off"
       spellcheck="false"
     />
-    <button type="submit" disabled={$connection.state === "testing"}>
-      {$connection.state === "testing" ? "Test…" : "Tester"}
-    </button>
-  </form>
-
-  <div class="status">
-    {#if $connection.state === "connected"}
-      <span class="badge ok">● Connecté</span> à <strong>{$connection.host}</strong>
-    {:else if $connection.state === "testing"}
-      <span class="badge wait">● Test en cours…</span>
+    {#if $wsState === "connected"}
+      <span class="badge ok">● Connected</span>
+      <button class="ghost" onclick={disconnect}>Disconnect</button>
     {:else}
-      <span class="badge off">● Déconnecté</span>
-      {#if $connection.error}
-        <div class="error">{$connection.error}</div>
-      {/if}
+      <span class="badge off">● Disconnected</span>
+      <button onclick={connect}>Connect</button>
     {/if}
-  </div>
+  </header>
 
-  {#if $connection.state === "connected" && $connection.info}
-    <pre class="info">{$connection.info}</pre>
-  {/if}
-</main>
+  <main class="content">
+    <StatusPanel />
+    <Console />
+  </main>
+</div>
 
 <style>
-  :root {
+  :global(body) {
+    margin: 0;
     font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-    color: #f6f6f6;
-    background-color: #1f1f1f;
+    color: #f0f0f0;
+    background: #1a1a1a;
   }
-  .container {
-    margin: 0 auto;
-    padding-top: 8vh;
-    max-width: 640px;
+  .app {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    text-align: center;
+    height: 100vh;
   }
-  .subtitle {
-    opacity: 0.7;
-    margin-top: -0.5em;
-  }
-  .row {
+  .topbar {
     display: flex;
-    gap: 8px;
-    margin: 1.5em 0;
+    align-items: center;
+    gap: 10px;
+    padding: 0.6em 1em;
+    background: #222;
+    border-bottom: 1px solid #333;
   }
-  input,
-  button {
+  .brand {
+    margin-right: 0.5em;
+  }
+  .host {
+    flex: 0 0 220px;
+    padding: 0.45em 0.8em;
     border-radius: 8px;
     border: 1px solid #444;
-    padding: 0.6em 1.2em;
-    font-size: 1em;
-    font-family: inherit;
+    background: #2b2b2b;
     color: #fff;
-    background-color: #2b2b2b;
-  }
-  input {
-    min-width: 260px;
-  }
-  button {
-    cursor: pointer;
-    border-color: #396cd8;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .status {
-    margin-bottom: 1em;
   }
   .badge {
     font-weight: 600;
+    font-size: 0.9em;
   }
   .badge.ok {
     color: #3ddc84;
@@ -123,27 +89,25 @@
   .badge.off {
     color: #888;
   }
-  .badge.wait {
-    color: #e0b341;
-  }
-  .error {
-    margin-top: 0.5em;
-    color: #ff6b6b;
-    font-size: 0.85em;
-    max-width: 520px;
-    word-break: break-word;
-  }
-  .info {
-    text-align: left;
-    background: #161616;
-    border: 1px solid #333;
+  button {
+    padding: 0.45em 1em;
     border-radius: 8px;
+    border: 1px solid #396cd8;
+    background: #396cd8;
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.9em;
+  }
+  button.ghost {
+    background: transparent;
+    border-color: #555;
+  }
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
     padding: 1em;
-    max-width: 560px;
-    max-height: 300px;
     overflow: auto;
-    font-size: 0.8em;
-    white-space: pre-wrap;
-    word-break: break-word;
   }
 </style>
