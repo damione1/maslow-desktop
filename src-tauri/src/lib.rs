@@ -1,5 +1,6 @@
 mod calibration;
 mod connection;
+mod fluidnc;
 mod grbl;
 mod http_api;
 mod maslow;
@@ -18,6 +19,7 @@ pub fn run() {
             http_api::ping_machine,
             http_api::read_maslow_anchors,
             http_api::read_maslow_config,
+            http_api::read_full_config,
             http_api::write_maslow_setting,
             http_api::save_maslow_config,
             http_api::upload_file,
