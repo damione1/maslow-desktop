@@ -48,22 +48,8 @@ pub fn parse_state(line: &str) -> Option<i32> {
     digits.parse().ok()
 }
 
-/// Human label for a calibration state code (mirrors MaslowEnums.h).
-pub fn state_name(state: i32) -> &'static str {
-    match state {
-        0 => "Unknown",
-        1 => "Retracting",
-        2 => "Retracted",
-        3 => "Extending",
-        4 => "Extended",
-        5 => "Taking Slack",
-        6 => "Calibrating",
-        7 => "Ready to Cut",
-        8 => "Releasing Tension",
-        9 => "Computing",
-        _ => "Unknown",
-    }
-}
+// State code → label mapping (MaslowEnums.h 0-9) lives in the frontend
+// (stores/maslow.ts STATE_NAMES); the backend only forwards the raw code.
 
 #[cfg(test)]
 mod tests {
@@ -91,12 +77,5 @@ mod tests {
         assert_eq!(parse_state("[MSG:INFO: Current state: 7]"), Some(7));
         assert_eq!(parse_state("[MSG:INFO: Current state: 0]"), Some(0));
         assert_eq!(parse_state("[MSG:INFO: something else]"), None);
-    }
-
-    #[test]
-    fn state_names() {
-        assert_eq!(state_name(7), "Ready to Cut");
-        assert_eq!(state_name(4), "Extended");
-        assert_eq!(state_name(99), "Unknown");
     }
 }

@@ -344,8 +344,10 @@ async fn run_socket(
             }
             _ = maslow_tick.tick() => {
                 if !job.as_ref().map_or(false, |j| j.active()) {
-                    let _ = write.send(Message::Text("$Maslow/getInfo\n".to_string())).await;
-                    let _ = write.send(Message::Text("$Maslow/gstate\n".to_string())).await;
+                    // Short command names ($MINFO/$GSTATE), as the embedded UI uses;
+                    // the long `$Maslow/getInfo` form is rejected by the firmware.
+                    let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
+                    let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
                 }
             }
         }

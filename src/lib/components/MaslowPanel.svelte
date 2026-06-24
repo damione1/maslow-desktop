@@ -31,8 +31,20 @@
   const canTakeSlack = $derived(inState([4]));
   const canCalibrate = $derived(inState([4]));
 
-  function action(cmd: string) {
-    invoke("send_line", { line: `$Maslow/${cmd}` });
+  // Short command names the firmware accepts (the embedded UI uses these;
+  // the long `$Maslow/...` forms are rejected with error:3).
+  const CMD = {
+    retract: "$ALL",
+    extend: "$EXT",
+    comply: "$CMP",
+    takeSlack: "$TKSLK",
+    calibrate: "$CAL",
+    stop: "$STOP",
+    estop: "$ESTOP",
+  } as const;
+
+  function action(cmd: keyof typeof CMD) {
+    invoke("send_line", { line: CMD[cmd] });
   }
 
   function belt(label: string, len: number, err: number) {
