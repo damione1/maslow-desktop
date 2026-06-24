@@ -1,7 +1,7 @@
 import { get, writable } from "svelte/store";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { pushConsoleLine } from "$lib/stores/machine";
+import { pushConsoleLine, wsState } from "$lib/stores/machine";
 import { connection } from "$lib/stores/connection";
 
 export interface MaslowInfo {
@@ -208,35 +208,20 @@ export function toggleExcluded(index: number): void {
 /** The full FluidNC config tree (every editable leaf), or null until read. */
 export const fullConfig = writable<ConfigEntry[] | null>(null);
 
-/** Dump and flatten the entire FluidNC machine config (`$CD`). Heavy; only the
- * config screen triggers it, never on connect. */
-export async function refreshFullConfig(): Promise<void> {
-  const host = get(connection).host;
-  if (!host) return;
-  fullConfig.set(await invoke<ConfigEntry[]>("read_full_config", { host }));
+/** Request a `$CD` config dump over the WS. The HTTP `/command` endpoint
+ * returns an empty body for `$`/`$/` commands (the firmware routes the output
+ * to the active WS channel instead), so reads must go over the socket. One dump
+ * fills `fullConfig`, `maslowConfig` and `anchors` via the events below. */
+export async function requestConfigDump(): Promise<void> {
+  if (get(wsState) !== "connected") return;
+  await invoke("request_config_dump");
 }
 
-/** Read the full Maslow configuration (anchors + work area + tension) from the
- * firmware over HTTP. Heavier than `refreshAnchors` (several `$/` reads), so it
- * is only triggered by the config screen, not on every connect. */
-export async function refreshConfig(): Promise<void> {
-  const host = get(connection).host;
-  if (!host) return;
-  maslowConfig.set(await invoke<MaslowConfig>("read_maslow_config", { host }));
-}
-
-/** Fetch the frame anchors from the firmware (HTTP) to learn whether the
- * machine is already calibrated. Safe to call repeatedly; failures are
- * swallowed (the badge simply stays unknown). */
-export async function refreshAnchors(): Promise<void> {
-  const host = get(connection).host;
-  if (!host) return;
-  try {
-    anchors.set(await invoke<Anchors>("read_maslow_anchors", { host }));
-  } catch {
-    anchors.set(null);
-  }
-}
+// The three panels each have a "Read" button; all of them trigger the same
+// single dump, and the stores fill asynchronously from the dump events.
+export const refreshFullConfig = requestConfigDump;
+export const refreshConfig = requestConfigDump;
+export const refreshAnchors = requestConfigDump;
 
 let started = false;
 
@@ -285,6 +270,14 @@ export async function initMaslowListeners(): Promise<void> {
     // Anchors were just (re)written to the config — refresh the badge.
     refreshAnchors();
   });
+
+  // A single `$CD` dump (requestConfigDump) fills all three config stores.
+  await listen<ConfigEntry[]>("config-dump", (e) => fullConfig.set(e.payload));
+  await listen<MaslowConfig>("maslow-config", (e) => maslowConfig.set(e.payload));
+  await listen<Anchors>("maslow-anchors", (e) => anchors.set(e.payload));
+  await listen<string>("config-dump-error", (e) =>
+    pushConsoleLine(`[config dump] ${e.payload}`),
+  );
 
   await listen<ActionPolicy>("action-policy", (e) => actionPolicy.set(e.payload));
 

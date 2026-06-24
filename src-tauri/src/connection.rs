@@ -48,6 +48,10 @@ pub enum WsCommand {
     PauseJob,
     ResumeJob,
     StopJob,
+    /// Dump the full machine config (`$CD`) and capture the streamed YAML from
+    /// the WS (the HTTP `/command` endpoint returns an empty body for non-`[ESP]`
+    /// commands — the output is routed to the active WS channel instead).
+    DumpConfig,
 }
 
 #[derive(Default)]
@@ -121,6 +125,13 @@ pub async fn send_line(state: State<'_, ConnState>, line: String) -> Result<(), 
 #[tauri::command]
 pub async fn send_realtime(state: State<'_, ConnState>, byte: u8) -> Result<(), String> {
     send_cmd(&state, WsCommand::Realtime(byte)).await
+}
+
+/// Request a full config dump over the WS. The result arrives asynchronously as
+/// `config-dump` (+ derived `maslow-config`/`maslow-anchors`) events.
+#[tauri::command]
+pub async fn request_config_dump(state: State<'_, ConnState>) -> Result<(), String> {
+    send_cmd(&state, WsCommand::DumpConfig).await
 }
 
 /// Begin streaming a G-code file. Loaded and parsed here so the frontend only
@@ -371,6 +382,20 @@ async fn run_socket(
                         *job = None;
                         streaming::emit_progress(app, job, None);
                     }
+                    Some(WsCommand::DumpConfig) => {
+                        if job.as_ref().map_or(false, |j| j.active()) {
+                            let _ = app.emit("config-dump-error",
+                                "stop the job to read the config".to_string());
+                        } else {
+                            // Capture the streamed YAML until the terminating ok;
+                            // suspend the burst poll so its `ok`s can't truncate it.
+                            ctx.capture = Some(Vec::new());
+                            ctx.capture_started = Some(Instant::now());
+                            burst_remaining = 0;
+                            write.send(Message::Text("$CD\n".to_string()))
+                                .await.map_err(|e| e.to_string())?;
+                        }
+                    }
                     None => {
                         let _ = write.send(Message::Close(None)).await;
                         return Ok(());
@@ -379,12 +404,20 @@ async fn run_socket(
             }
             _ = status_tick.tick() => {
                 write.send(Message::Binary(vec![b'?'])).await.map_err(|e| e.to_string())?;
+                // Abort a stuck config capture so polling resumes.
+                if let Some(started) = ctx.capture_started {
+                    if started.elapsed() > Duration::from_secs(10) {
+                        ctx.capture = None;
+                        ctx.capture_started = None;
+                        let _ = app.emit("config-dump-error", "config dump timed out".to_string());
+                    }
+                }
                 if last_activity.elapsed() > Duration::from_secs(20) {
                     return Err("watchdog: no activity for 20s".into());
                 }
             }
             _ = maslow_tick.tick() => {
-                if !job.as_ref().map_or(false, |j| j.active()) {
+                if ctx.capture.is_none() && !job.as_ref().map_or(false, |j| j.active()) {
                     // Short command names ($MINFO/$GSTATE), as the embedded UI uses;
                     // the long `$Maslow/getInfo` form is rejected by the firmware.
                     let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
@@ -483,6 +516,11 @@ struct SocketCtx {
     fluidnc_state: String,
     /// Last emitted action policy, to avoid spamming identical events.
     last_policy: Option<maslow::ActionPolicy>,
+    /// When `Some`, a `$CD` config dump is being captured: accumulated YAML
+    /// lines, awaiting the terminating `ok`/`error`.
+    capture: Option<Vec<String>>,
+    /// Start time of the in-flight capture, for the timeout guard.
+    capture_started: Option<Instant>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -521,6 +559,31 @@ fn refresh_policy(app: &AppHandle, ctx: &mut SocketCtx, job_active: bool) {
 fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool) {
     if line.is_empty() {
         return;
+    }
+    // Config dump capture: accumulate `$CD` YAML until the terminating ok/error.
+    // Guards against stale poll output racing the dump: an `ok` with an empty
+    // buffer is a leftover `$MINFO`/`$GSTATE` ack from just before the dump (the
+    // firmware answers those in order, before `$CD`'s body), so it's ignored;
+    // poll noise (`[MSG]`/`MINFO:`/control) is dropped; status reports are let
+    // through to keep the DRO live; only real YAML lines are captured.
+    if let Some(buf) = ctx.capture.as_mut() {
+        if ack_kind(line).is_some() {
+            if buf.is_empty() {
+                return;
+            }
+            let yaml = ctx.capture.take().unwrap().join("\n");
+            ctx.capture_started = None;
+            finalize_config_dump(app, &yaml);
+            return;
+        }
+        if grbl::parse_status_report(line).is_some() {
+            // fall through to update machine-status; not part of the config
+        } else if line.starts_with('[') || line.starts_with("MINFO:") || is_control(line) {
+            return; // stale poll output, not config
+        } else {
+            buf.push(line.to_string());
+            return;
+        }
     }
     if let Some(mut status) = grbl::parse_status_report(line) {
         if !status.wco.is_empty() {
@@ -600,4 +663,26 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         return;
     }
     let _ = app.emit("grbl-line", line.to_string());
+}
+
+/// Flatten a captured `$CD` YAML dump and emit it as `config-dump`, plus the
+/// derived Maslow config and anchors (rebuilt from the same dump via a synthetic
+/// `path=value` rendering the existing parsers understand).
+fn finalize_config_dump(app: &AppHandle, yaml: &str) {
+    let entries = crate::fluidnc::flatten_config(yaml);
+    if entries.is_empty() {
+        let _ = app.emit("config-dump-error", "empty or unparseable config dump".to_string());
+        return;
+    }
+    let synthetic: String = entries
+        .iter()
+        .map(|e| format!("{}={}\n", e.path, e.value))
+        .collect();
+    let _ = app.emit("config-dump", &entries);
+    if let Some(anchors) = maslow::parse_anchors(&synthetic) {
+        let _ = app.emit("maslow-anchors", &anchors);
+    }
+    if let Some(cfg) = maslow::parse_maslow_config(&synthetic) {
+        let _ = app.emit("maslow-config", &cfg);
+    }
 }

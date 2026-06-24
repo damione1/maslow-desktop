@@ -215,19 +215,6 @@ pub async fn read_maslow_config(host: String) -> Result<crate::maslow::MaslowCon
         .ok_or_else(|| format!("no Maslow config in response: {dump}"))
 }
 
-/// Dump the entire FluidNC machine config (`$CD` → YAML) and flatten it into
-/// editable leaf entries. Writes go back through `write_maslow_setting`
-/// (`$/<path>=<value>`) + `save_maslow_config` (`$CO`), which are generic.
-#[tauri::command]
-pub async fn read_full_config(host: String) -> Result<Vec<crate::fluidnc::ConfigEntry>, String> {
-    let dump = run_command(&host, "$CD").await?;
-    let entries = crate::fluidnc::flatten_config(&dump);
-    if entries.is_empty() {
-        return Err(format!("empty or unparseable config dump: {dump}"));
-    }
-    Ok(entries)
-}
-
 /// Write a single FluidNC setting: `$/<path>=<value>`. `path` is the full config
 /// path (e.g. `Maslow_Work_Area_X` or `kinematics/MaslowKinematics/tlX`). The
 /// firmware silently accepts a float/int write; a rejected write echoes an
