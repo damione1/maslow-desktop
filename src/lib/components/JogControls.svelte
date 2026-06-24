@@ -1,0 +1,194 @@
+<script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import { wsState } from "$lib/stores/machine";
+  import { jobProgress } from "$lib/stores/job";
+
+  const STEPS = [0.1, 1, 10, 50];
+  let step = $state(10);
+  let feed = $state(1000);
+
+  const connected = $derived($wsState === "connected");
+  const jobActive = $derived(
+    $jobProgress !== null &&
+      $jobProgress.state !== "done" &&
+      $jobProgress.state !== "error",
+  );
+  // Motion commands are pointless (and blocked) while a job streams.
+  const canMove = $derived(connected && !jobActive);
+
+  function line(cmd: string) {
+    invoke("send_line", { line: cmd });
+  }
+
+  function realtime(byte: number) {
+    invoke("send_realtime", { byte });
+  }
+
+  function jog(axis: "X" | "Y" | "Z", dir: 1 | -1) {
+    const dist = (dir * step).toString();
+    line(`$J=G91 G21 ${axis}${dist} F${feed}`);
+  }
+
+  // 0x18 = Ctrl-X soft reset, 0x21 = '!', 0x7e = '~', 0x85 = jog cancel.
+  const hold = () => realtime(0x21);
+  const resume = () => realtime(0x7e);
+  const reset = () => realtime(0x18);
+  const jogCancel = () => realtime(0x85);
+
+  const home = () => line("$H");
+  const unlock = () => line("$X");
+  const zeroAll = () => line("G10 L20 P0 X0 Y0 Z0");
+</script>
+
+<section class="jog">
+  <header>
+    <span>Manual Control</span>
+    {#if jobActive}<span class="hint">locked during job</span>{/if}
+  </header>
+
+  <div class="grid">
+    <div class="xy">
+      <button class="up" onclick={() => jog("Y", 1)} disabled={!canMove}>Y+</button>
+      <button class="left" onclick={() => jog("X", -1)} disabled={!canMove}>X−</button>
+      <button class="home" onclick={home} disabled={!canMove} title="Home $H">⌂</button>
+      <button class="right" onclick={() => jog("X", 1)} disabled={!canMove}>X+</button>
+      <button class="down" onclick={() => jog("Y", -1)} disabled={!canMove}>Y−</button>
+    </div>
+
+    <div class="z">
+      <button onclick={() => jog("Z", 1)} disabled={!canMove}>Z+</button>
+      <button onclick={() => jog("Z", -1)} disabled={!canMove}>Z−</button>
+    </div>
+  </div>
+
+  <div class="row steps">
+    <span class="lbl">Step</span>
+    {#each STEPS as s}
+      <button class="chip" class:on={step === s} onclick={() => (step = s)}>
+        {s}
+      </button>
+    {/each}
+    <span class="lbl">Feed</span>
+    <input class="feed" type="number" min="1" bind:value={feed} />
+  </div>
+
+  <div class="row">
+    <button class="ghost" onclick={unlock} disabled={!canMove}>Unlock $X</button>
+    <button class="ghost" onclick={zeroAll} disabled={!canMove}>Zero XYZ</button>
+    <button class="ghost" onclick={jogCancel} disabled={!connected}>Jog Cancel</button>
+  </div>
+
+  <div class="row realtime">
+    <button class="hold" onclick={hold} disabled={!connected}>Hold !</button>
+    <button class="resume" onclick={resume} disabled={!connected}>Resume ~</button>
+    <button class="danger" onclick={reset} disabled={!connected}>Reset ⌃X</button>
+  </div>
+</section>
+
+<style>
+  .jog {
+    background: #161616;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 0.7em 0.9em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7em;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85em;
+    opacity: 0.85;
+  }
+  .hint {
+    font-size: 0.78em;
+    color: #e0a83d;
+  }
+  .grid {
+    display: flex;
+    gap: 1.2em;
+    align-items: center;
+  }
+  .xy {
+    display: grid;
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(3, 40px);
+    gap: 6px;
+  }
+  .xy .up { grid-column: 2; grid-row: 1; }
+  .xy .left { grid-column: 1; grid-row: 2; }
+  .xy .home { grid-column: 2; grid-row: 2; }
+  .xy .right { grid-column: 3; grid-row: 2; }
+  .xy .down { grid-column: 2; grid-row: 3; }
+  .z {
+    display: grid;
+    grid-template-rows: 40px 40px;
+    gap: 6px;
+    width: 48px;
+  }
+  button {
+    border-radius: 8px;
+    border: 1px solid #396cd8;
+    background: #2b3a5c;
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.9em;
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .home {
+    background: #333;
+    border-color: #555;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    flex-wrap: wrap;
+  }
+  .row button {
+    padding: 0.4em 0.9em;
+  }
+  .lbl {
+    font-size: 0.78em;
+    opacity: 0.6;
+  }
+  .chip {
+    background: #222;
+    border-color: #444;
+    padding: 0.3em 0.7em;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip.on {
+    background: #396cd8;
+    border-color: #396cd8;
+  }
+  .feed {
+    width: 80px;
+    padding: 0.35em 0.5em;
+    border-radius: 7px;
+    border: 1px solid #444;
+    background: #2b2b2b;
+    color: #fff;
+  }
+  .ghost {
+    background: transparent;
+    border-color: #555;
+  }
+  .realtime .hold {
+    background: #b8860b;
+    border-color: #b8860b;
+  }
+  .realtime .resume {
+    background: #2e7d32;
+    border-color: #2e7d32;
+  }
+  .danger {
+    background: #8b2e2e;
+    border-color: #8b2e2e;
+  }
+</style>
