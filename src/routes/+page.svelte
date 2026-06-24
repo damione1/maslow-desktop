@@ -18,6 +18,7 @@
   import MaslowPanel from "$lib/components/MaslowPanel.svelte";
   import CalibrationWizard from "$lib/components/CalibrationWizard.svelte";
   import CalibrationView from "$lib/components/CalibrationView.svelte";
+  import CalibrationSolver from "$lib/components/CalibrationSolver.svelte";
   import MaslowConfig from "$lib/components/MaslowConfig.svelte";
   import JogControls from "$lib/components/JogControls.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
@@ -110,6 +111,7 @@
           <CalibrationWizard />
           <MaslowPanel />
         </div>
+        <CalibrationSolver />
       </div>
       <div class="panel" class:active={$activeTab === "config"}>
         <MaslowConfig />
