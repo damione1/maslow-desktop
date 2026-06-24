@@ -88,6 +88,20 @@ export interface MaslowConfig {
   work_area_center_offset_y: number;
   retract_current_threshold: number;
   extend_dist: number;
+  apply_tension_belt_retraction_limit: number;
+  apply_tension_allow_limiting: boolean;
+  spoilboard_thickness: number;
+  work_thickness: number;
+  calibration_grid_size: number;
+  calibration_grid_width_x: number;
+  calibration_grid_height_y: number;
+  acceptable_calibration_threshold: number;
+  scale_x: number;
+  scale_y: number;
+  vertical: boolean;
+  park_x: number;
+  park_y: number;
+  park_z: number;
   anchors_valid: boolean;
 }
 

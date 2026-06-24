@@ -13,7 +13,9 @@
   // explicit toggle and a geometry sanity gate mirroring the firmware's
   // checkBoundaries.
 
-  type NumKey = Exclude<keyof MaslowConfig, "anchors_valid">;
+  type BoolKey = "vertical" | "apply_tension_allow_limiting";
+  type NumKey = Exclude<keyof MaslowConfig, "anchors_valid" | BoolKey>;
+  type Group = "anchor" | "work" | "tension" | "material" | "calibration" | "park";
 
   interface NumField {
     key: NumKey;
@@ -23,43 +25,79 @@
     min: number;
     max: number;
     step: number;
-    group: "anchor" | "work" | "tension";
+    group: Group;
+    /** Plain-language explanation shown as a tooltip (firmware semantics). */
+    help: string;
+  }
+
+  interface BoolField {
+    key: BoolKey;
+    path: string;
+    label: string;
+    group: Group;
+    help: string;
   }
 
   const KIN = "kinematics/MaslowKinematics";
+  const ANCHOR_HELP =
+    "Frame anchor coordinate (mm). Normally set automatically by calibration — edit by hand only if you know the measured frame geometry.";
 
-  // Bounds mirror the firmware (MachineConfig::groupM4Items handler.item ranges
-  // and MaslowKinematics validation). NB: the firmware does NOT clamp runtime
-  // float writes, so client-side validation is the real guard for those.
+  // Bounds mirror the firmware (MachineConfig::groupM4Items item() ranges and
+  // MaslowKinematics validation). NB: the firmware does NOT clamp runtime float
+  // writes, so client-side validation is the real guard for those.
   const FIELDS: NumField[] = [
     // Anchors (mm) — advanced. X/Y allow the slightly-negative real frame
     // values (tlX ≈ -27.6); Z is the anchor height.
-    { key: "tl_x", path: `${KIN}/tlX`, label: "TL X", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "tl_y", path: `${KIN}/tlY`, label: "TL Y", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "tl_z", path: `${KIN}/tlZ`, label: "TL Z", min: 0, max: 500, step: 0.1, group: "anchor" },
-    { key: "tr_x", path: `${KIN}/trX`, label: "TR X", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "tr_y", path: `${KIN}/trY`, label: "TR Y", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "tr_z", path: `${KIN}/trZ`, label: "TR Z", min: 0, max: 500, step: 0.1, group: "anchor" },
-    { key: "bl_x", path: `${KIN}/blX`, label: "BL X", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "bl_y", path: `${KIN}/blY`, label: "BL Y", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "bl_z", path: `${KIN}/blZ`, label: "BL Z", min: 0, max: 500, step: 0.1, group: "anchor" },
-    { key: "br_x", path: `${KIN}/brX`, label: "BR X", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "br_y", path: `${KIN}/brY`, label: "BR Y", min: -500, max: 10000, step: 0.1, group: "anchor" },
-    { key: "br_z", path: `${KIN}/brZ`, label: "BR Z", min: 0, max: 500, step: 0.1, group: "anchor" },
+    { key: "tl_x", path: `${KIN}/tlX`, label: "TL X", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "tl_y", path: `${KIN}/tlY`, label: "TL Y", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "tl_z", path: `${KIN}/tlZ`, label: "TL Z", min: 0, max: 500, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "tr_x", path: `${KIN}/trX`, label: "TR X", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "tr_y", path: `${KIN}/trY`, label: "TR Y", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "tr_z", path: `${KIN}/trZ`, label: "TR Z", min: 0, max: 500, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "bl_x", path: `${KIN}/blX`, label: "BL X", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "bl_y", path: `${KIN}/blY`, label: "BL Y", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "bl_z", path: `${KIN}/blZ`, label: "BL Z", min: 0, max: 500, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "br_x", path: `${KIN}/brX`, label: "BR X", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "br_y", path: `${KIN}/brY`, label: "BR Y", min: -500, max: 10000, step: 0.1, group: "anchor", help: ANCHOR_HELP },
+    { key: "br_z", path: `${KIN}/brZ`, label: "BR Z", min: 0, max: 500, step: 0.1, group: "anchor", help: ANCHOR_HELP },
     // Work area (mm).
-    { key: "work_area_x", path: "Maslow_Work_Area_X", label: "Width X", min: 1, max: 10000, step: 1, group: "work" },
-    { key: "work_area_y", path: "Maslow_Work_Area_Y", label: "Height Y", min: 1, max: 10000, step: 1, group: "work" },
-    { key: "work_area_center_offset_x", path: "Maslow_Work_Area_Center_Offset_X", label: "Center offset X", min: -5000, max: 5000, step: 1, group: "work" },
-    { key: "work_area_center_offset_y", path: "Maslow_Work_Area_Center_Offset_Y", label: "Center offset Y", min: -5000, max: 5000, step: 1, group: "work" },
-    // Belt tension / extension. NB: the Apply_Tension_* keys were removed —
-    // they only exist on firmware ≥ v1.22.0 and v1.21 rejects them (error:3).
-    { key: "retract_current_threshold", path: "Maslow_Retract_Current_Threshold", label: "Retract current threshold", min: 0, max: 3500, step: 50, group: "tension" },
-    { key: "extend_dist", path: "Maslow_Extend_Dist", label: "Extend distance", min: 0, max: 4250, step: 10, group: "tension" },
+    { key: "work_area_x", path: "Maslow_Work_Area_X", label: "Width X", min: 1, max: 10000, step: 1, group: "work", help: "Width of the usable cutting area (mm)." },
+    { key: "work_area_y", path: "Maslow_Work_Area_Y", label: "Height Y", min: 1, max: 10000, step: 1, group: "work", help: "Height of the usable cutting area (mm)." },
+    { key: "work_area_center_offset_x", path: "Maslow_Work_Area_Center_Offset_X", label: "Center offset X", min: -5000, max: 5000, step: 1, group: "work", help: "Horizontal shift of the work-area centre from the frame centre (mm)." },
+    { key: "work_area_center_offset_y", path: "Maslow_Work_Area_Center_Offset_Y", label: "Center offset Y", min: -5000, max: 5000, step: 1, group: "work", help: "Vertical shift of the work-area centre from the frame centre (mm)." },
+    // Belt tension / extension.
+    { key: "retract_current_threshold", path: "Maslow_Retract_Current_Threshold", label: "Retract current threshold", min: 0, max: 3500, step: 50, group: "tension", help: "Motor current at which a belt is considered fully tight when retracting / taking up slack. Higher = tighter belts (and more strain)." },
+    { key: "extend_dist", path: "Maslow_Extend_Dist", label: "Extend distance", min: 0, max: 4250, step: 10, group: "tension", help: "How far the belts pay out when you press Extend, before calibration (mm). Set automatically after Find Anchors." },
+    { key: "apply_tension_belt_retraction_limit", path: "Maslow_Apply_Tension_Belt_Retraction_Limit", label: "Apply-tension retraction limit", min: 0, max: 4250, step: 10, group: "tension", help: "Maximum belt retraction allowed while applying tension (mm). Firmware ≥ v1.22." },
+    // Material thickness (mm).
+    { key: "spoilboard_thickness", path: "Maslow_spoilboardThickness", label: "Spoilboard thickness", min: 0, max: 50, step: 0.1, group: "material", help: "Spoilboard thickness (mm). Offsets Z so calibration and Z-zero account for it." },
+    { key: "work_thickness", path: "Maslow_workThickness", label: "Work thickness", min: 0, max: 50, step: 0.1, group: "material", help: "Workpiece thickness (mm). Added to the Z offset during calibration." },
+    // Calibration tuning.
+    { key: "calibration_grid_size", path: "Maslow_calibration_grid_size", label: "Grid size", min: 3, max: 9, step: 2, group: "calibration", help: "Number of measurement points per side of the calibration grid (3, 5, 7 or 9). More points = more accurate but slower." },
+    { key: "calibration_grid_width_x", path: "Maslow_calibration_grid_width_mm_X", label: "Grid width X", min: 0, max: 3000, step: 1, group: "calibration", help: "Width of the calibration measurement grid (mm). 0 = derive from the work area." },
+    { key: "calibration_grid_height_y", path: "Maslow_calibration_grid_height_mm_Y", label: "Grid height Y", min: 0, max: 3000, step: 1, group: "calibration", help: "Height of the calibration measurement grid (mm). 0 = derive from the work area." },
+    { key: "acceptable_calibration_threshold", path: "Maslow_Acceptable_Calibration_Threshold", label: "Acceptable fitness", min: 0, max: 1, step: 0.01, group: "calibration", help: "Fit error (mm) below which a calibration pass is accepted before measuring more points. Lower = stricter." },
+    { key: "scale_x", path: "Maslow_Scale_X", label: "Scale X", min: 0.8, max: 1.2, step: 0.001, group: "calibration", help: "Linear scale correction on the X axis (≈ 1.0). Compensates small dimensional error." },
+    { key: "scale_y", path: "Maslow_Scale_Y", label: "Scale Y", min: 0.8, max: 1.2, step: 0.001, group: "calibration", help: "Linear scale correction on the Y axis (≈ 1.0). Compensates small dimensional error." },
+    // Park position.
+    { key: "park_x", path: "Maslow_Park_X", label: "Park X", min: -10000, max: 10000, step: 1, group: "park", help: "Park position X in machine coordinates (mm)." },
+    { key: "park_y", path: "Maslow_Park_Y", label: "Park Y", min: -10000, max: 10000, step: 1, group: "park", help: "Park position Y in machine coordinates (mm)." },
+    { key: "park_z", path: "Maslow_Park_Z", label: "Park Z", min: -100, max: 100, step: 0.1, group: "park", help: "Z lift in work coordinates when parking (mm)." },
+  ];
+
+  const BOOL_FIELDS: BoolField[] = [
+    { key: "vertical", path: "Maslow_vertical", label: "Vertical orientation", group: "calibration", help: "On if the machine frame hangs vertically (the usual Maslow setup)." },
+    { key: "apply_tension_allow_limiting", path: "Maslow_Apply_Tension_Allow_Limiting", label: "Allow tension limiting", group: "tension", help: "Allow the apply-tension step to cap belt retraction at the limit above. Firmware ≥ v1.22." },
   ];
 
   const anchorFields = FIELDS.filter((f) => f.group === "anchor");
   const workFields = FIELDS.filter((f) => f.group === "work");
   const tensionFields = FIELDS.filter((f) => f.group === "tension");
+  const materialFields = FIELDS.filter((f) => f.group === "material");
+  const calibrationFields = FIELDS.filter((f) => f.group === "calibration");
+  const parkFields = FIELDS.filter((f) => f.group === "park");
+  const tensionBools = BOOL_FIELDS.filter((f) => f.group === "tension");
+  const calibrationBools = BOOL_FIELDS.filter((f) => f.group === "calibration");
 
   const connected = $derived($wsState === "connected");
   const jobActive = $derived(
@@ -71,6 +109,7 @@
   const config = $derived($maslowConfig);
 
   let draft = $state<Record<string, number>>({});
+  let boolDraft = $state<Record<string, boolean>>({});
   let showAnchors = $state(false);
   let busy = $state(false);
   let message = $state("");
@@ -93,6 +132,9 @@
     const d: Record<string, number> = {};
     for (const f of FIELDS) d[f.key] = c[f.key];
     draft = d;
+    const b: Record<string, boolean> = {};
+    for (const f of BOOL_FIELDS) b[f.key] = c[f.key];
+    boolDraft = b;
   });
 
   async function load() {
@@ -137,9 +179,15 @@
   function isDirty(f: NumField): boolean {
     return !!config && draft[f.key] !== config[f.key];
   }
+  function isBoolDirty(f: BoolField): boolean {
+    return !!config && boolDraft[f.key] !== config[f.key];
+  }
 
   const anchorsDirty = $derived(anchorFields.some((f) => isDirty(f)));
-  const dirty = $derived(!!config && FIELDS.some((f) => isDirty(f)));
+  const dirty = $derived(
+    !!config &&
+      (FIELDS.some((f) => isDirty(f)) || BOOL_FIELDS.some((f) => isBoolDirty(f))),
+  );
   const anyInvalid = $derived(FIELDS.some((f) => fieldInvalid(f)));
   // Block saving anchors that would corrupt geometry; non-anchor edits are
   // never blocked by the anchor geometry check.
@@ -152,6 +200,9 @@
     const d: Record<string, number> = {};
     for (const f of FIELDS) d[f.key] = config[f.key];
     draft = d;
+    const b: Record<string, boolean> = {};
+    for (const f of BOOL_FIELDS) b[f.key] = config[f.key];
+    boolDraft = b;
     message = "";
     error = "";
   }
@@ -169,6 +220,15 @@
             host,
             path: f.path,
             value: String(draft[f.key]),
+          });
+        }
+      }
+      for (const f of BOOL_FIELDS) {
+        if (boolDraft[f.key] !== config[f.key]) {
+          await invoke("write_maslow_setting", {
+            host,
+            path: f.path,
+            value: boolDraft[f.key] ? "true" : "false",
           });
         }
       }
@@ -213,41 +273,65 @@
       </div>
     {/if}
 
+    {#snippet numField(f: NumField)}
+      <label class:dirty={isDirty(f)} class:invalid={fieldInvalid(f)} title={f.help}>
+        <span>{f.label} <abbr title={f.help}>ⓘ</abbr></span>
+        <input
+          type="number"
+          step={f.step}
+          min={f.min}
+          max={f.max}
+          bind:value={draft[f.key]}
+          disabled={!editable}
+        />
+      </label>
+    {/snippet}
+
+    {#snippet boolField(f: BoolField)}
+      <label class="boolrow" class:dirty={isBoolDirty(f)} title={f.help}>
+        <input
+          type="checkbox"
+          bind:checked={boolDraft[f.key]}
+          disabled={!editable}
+        />
+        <span>{f.label} <abbr title={f.help}>ⓘ</abbr></span>
+      </label>
+    {/snippet}
+
     <div class="grp">
       <h4>Work area <small>mm</small></h4>
       <div class="grid">
-        {#each workFields as f (f.key)}
-          <label class:dirty={isDirty(f)} class:invalid={fieldInvalid(f)}>
-            <span>{f.label}</span>
-            <input
-              type="number"
-              step={f.step}
-              min={f.min}
-              max={f.max}
-              bind:value={draft[f.key]}
-              disabled={!editable}
-            />
-          </label>
-        {/each}
+        {#each workFields as f (f.key)}{@render numField(f)}{/each}
       </div>
     </div>
 
     <div class="grp">
       <h4>Belt tension &amp; extension</h4>
       <div class="grid">
-        {#each tensionFields as f (f.key)}
-          <label class:dirty={isDirty(f)} class:invalid={fieldInvalid(f)}>
-            <span>{f.label} <small>{f.min}–{f.max}</small></span>
-            <input
-              type="number"
-              step={f.step}
-              min={f.min}
-              max={f.max}
-              bind:value={draft[f.key]}
-              disabled={!editable}
-            />
-          </label>
-        {/each}
+        {#each tensionFields as f (f.key)}{@render numField(f)}{/each}
+        {#each tensionBools as f (f.key)}{@render boolField(f)}{/each}
+      </div>
+    </div>
+
+    <div class="grp">
+      <h4>Material <small>mm</small></h4>
+      <div class="grid">
+        {#each materialFields as f (f.key)}{@render numField(f)}{/each}
+      </div>
+    </div>
+
+    <div class="grp">
+      <h4>Calibration tuning</h4>
+      <div class="grid">
+        {#each calibrationFields as f (f.key)}{@render numField(f)}{/each}
+        {#each calibrationBools as f (f.key)}{@render boolField(f)}{/each}
+      </div>
+    </div>
+
+    <div class="grp">
+      <h4>Park position</h4>
+      <div class="grid">
+        {#each parkFields as f (f.key)}{@render numField(f)}{/each}
       </div>
     </div>
 
@@ -271,19 +355,7 @@
           </div>
         {/if}
         <div class="grid anchors">
-          {#each anchorFields as f (f.key)}
-            <label class:dirty={isDirty(f)} class:invalid={fieldInvalid(f)}>
-              <span>{f.label}</span>
-              <input
-                type="number"
-                step={f.step}
-                min={f.min}
-                max={f.max}
-                bind:value={draft[f.key]}
-                disabled={!editable}
-              />
-            </label>
-          {/each}
+          {#each anchorFields as f (f.key)}{@render numField(f)}{/each}
         </div>
       {/if}
     </div>
@@ -391,6 +463,23 @@
   label small {
     opacity: 0.5;
     font-size: 0.85em;
+  }
+  label abbr {
+    cursor: help;
+    text-decoration: none;
+    opacity: 0.5;
+    font-size: 0.85em;
+  }
+  label.boolrow {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5em;
+  }
+  label.boolrow input {
+    width: auto;
+  }
+  label.boolrow.dirty {
+    border-color: #b8860b;
   }
   label.dirty {
     border-color: #b8860b;
