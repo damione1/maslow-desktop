@@ -3,13 +3,16 @@
   import { invoke } from "@tauri-apps/api/core";
   import { connection, persistHost } from "$lib/stores/connection";
   import { wsState, initMachineListeners } from "$lib/stores/machine";
+  import { initJobListeners } from "$lib/stores/job";
   import StatusPanel from "$lib/components/StatusPanel.svelte";
+  import JobPanel from "$lib/components/JobPanel.svelte";
   import Console from "$lib/components/Console.svelte";
 
   let host = $state($connection.host);
 
   onMount(() => {
     initMachineListeners();
+    initJobListeners();
   });
 
   async function connect() {
@@ -44,6 +47,7 @@
 
   <main class="content">
     <StatusPanel />
+    <JobPanel />
     <Console />
   </main>
 </div>
