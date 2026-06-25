@@ -24,6 +24,35 @@ export interface SavedJob {
 /** Live streaming progress, or null when no job is loaded. */
 export const jobProgress = writable<JobProgress | null>(null);
 
+export interface ToolpathSegment {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  rapid: boolean;
+}
+
+export interface Toolpath {
+  segments: ToolpathSegment[];
+  min_x: number;
+  min_y: number;
+  max_x: number;
+  max_y: number;
+  has_bounds: boolean;
+}
+
+/** Parsed 2D toolpath of the currently selected local file, or null. */
+export const toolpath = writable<Toolpath | null>(null);
+
+/** Parse a local G-code file into a toolpath for preview + trace boundary. */
+export async function loadToolpath(path: string): Promise<void> {
+  try {
+    toolpath.set(await invoke<Toolpath>("load_toolpath", { path }));
+  } catch {
+    toolpath.set(null);
+  }
+}
+
 let started = false;
 
 export async function initJobListeners(): Promise<void> {

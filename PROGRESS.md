@@ -180,8 +180,15 @@ Sur retour utilisateur (l'UI ESP32 a des explications de params + « a-t-on tout
 Ajoutés à `MaslowPanel.svelte` (aucun changement Rust — réutilise `send_line`) :
 - **Park** : réplique la séquence READY_TO_CUT de l'UI embarquée — `G90 G0 Z<parkZ>` puis `G53 G0 Y<parkY> X<parkX>` avec les offsets park lus dans `maslowConfig` (défauts 2/0/0). Activé seulement en READY_TO_CUT(7) + idle (gate `policy.code===7 && actionPolicy.jog`, ce qui couvre aussi le verrou job).
 - **Section « Diagnostics »** (repliée par défaut) : `$TEST` (self-test, confirm « la machine va bouger »), `$SETZSTOP` (fixe le Z stop courant), `$CALRESET` (reset de la FSM calibration, confirm — récupération d'une calibration bloquée). Tous `anyState` côté firmware, gatés sur lien actif + idle.
-- **Non fait : Trace Boundary** — nécessite le bounding-box du G-code chargé (`getJobBoundingBox`/`jobEnvelopePoints`), donc le **parsing/rendu toolpath** que le desktop n'a pas encore (déjà listé comme différé « toolpath G-code »). À faire avec cette feature.
+- **Trace Boundary** → livré en Phase 9 (rendu toolpath), voir ci-dessous.
 - **`npm run check` 0/0** (Rust inchangé).
+
+## Phase 9 — Rendu toolpath + Trace Boundary (LIVRÉ)
+- **Backend** `src-tauri/src/toolpath.rs` (nouveau) : `parse_toolpath(lines) -> Toolpath{segments[], bbox, has_bounds}`. Parse la motion XY : tokenizer lettre+nombre (gère `G1X10Y-3` collé, commentaires `(...)` inline), G0/G1 (segments rapid/feed), G2/G3 (arcs via I/J ou rayon R, interpolés ~10°/segment), modaux G90/G91 (abs/incrémental) + G20/G21 (inch→×25.4). **Bbox = moves de coupe uniquement** (feeds/arcs, pas les rapides) → c'est l'étendue de la pièce que « trace boundary » doit suivre (le rapide initial depuis 0,0 ne gonfle pas le bbox). Commande `load_toolpath(path)` (lit via `streaming::load_gcode` + parse). **+4 tests (linéaire/bbox, incrémental+inch, arc I/J quart de cercle, programme vide) → 45 tests Rust verts, 0 warning.**
+- **Front** : store `toolpath` + `loadToolpath(path)` (`job.ts`) ; `ToolpathView.svelte` (canvas 360×260, auto-scalé sur **tous** les segments, Y flippé, rapides pointillés gris / coupes bleu, rectangle bbox ambré + dimensions mm) monté dans l'onglet Job entre JobPanel et FileBrowser. `JobPanel` appelle `loadToolpath` à la sélection d'un fichier **et** au montage si un job repris existe.
+- **Trace Boundary** (dans `ToolpathView`) : bouton qui envoie le périmètre du bbox (`G21 G90` + `G0` aux 4 coins + retour) via `send_line`, Z non bougé, avec confirm affichant les dimensions. Gaté connecté + idle (`actionPolicy.jog`) + hors job + bbox valide.
+- **Limites** : preview pour les fichiers **locaux** seulement (les fichiers SD lancés via `$SD/Run=` ne passent pas par `load_toolpath`) ; plan 2D (Z/feedrate ignorés) ; arcs R rares approximés (I/J priorisé). `npm run check` 0/0.
+- **Reste optionnel** : surligner la progression live sur le toolpath, envelope « shaped » (vs rectangle) pour trace boundary.
 - **Tooltips panneau générique** : non ajoutés (197 champs ; le `title`=chemin suffit, les params Maslow importants sont tooltipés dans le panneau curaté).
 
 ## Phases ultérieures (hors périmètre "jusqu'à Levenberg")

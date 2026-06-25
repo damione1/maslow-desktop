@@ -5,6 +5,7 @@ mod grbl;
 mod http_api;
 mod maslow;
 mod streaming;
+mod toolpath;
 
 use connection::ConnState;
 
@@ -16,6 +17,7 @@ pub fn run() {
         .manage(ConnState::default())
         .invoke_handler(tauri::generate_handler![
             calibration::solve_calibration,
+            toolpath::load_toolpath,
             http_api::ping_machine,
             http_api::read_maslow_anchors,
             http_api::read_maslow_config,

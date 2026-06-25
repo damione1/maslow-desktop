@@ -4,7 +4,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
-  import { jobProgress, loadSavedJob, type SavedJob } from "$lib/stores/job";
+  import { jobProgress, loadSavedJob, loadToolpath, type SavedJob } from "$lib/stores/job";
 
   const GCODE_FILTER = {
     name: "G-code",
@@ -28,6 +28,8 @@
 
   onMount(async () => {
     saved = await loadSavedJob();
+    // Preview the resumable job's toolpath too (its file is still local).
+    if (saved?.path) loadToolpath(saved.path);
   });
 
   function basename(p: string): string {
@@ -49,6 +51,7 @@
       filePath = p;
       fileName = basename(p);
       notice = "";
+      loadToolpath(p);
     }
   }
 
