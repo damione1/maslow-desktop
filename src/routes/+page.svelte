@@ -22,6 +22,7 @@
   import MaslowConfig from "$lib/components/MaslowConfig.svelte";
   import FluidNCConfig from "$lib/components/FluidNCConfig.svelte";
   import JogControls from "$lib/components/JogControls.svelte";
+  import ControlOptions from "$lib/components/ControlOptions.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
   import ToolpathView from "$lib/components/ToolpathView.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
@@ -138,6 +139,7 @@
     <div class="rail-inner">
       <StatusPanel />
       <JogControls />
+      <ControlOptions />
     </div>
   {/snippet}
 
