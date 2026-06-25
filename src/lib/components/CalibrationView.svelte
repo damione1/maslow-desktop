@@ -4,6 +4,9 @@
   let canvas: HTMLCanvasElement | undefined = $state();
 
   const pts = $derived($waypoints);
+  // The map only has anything to show while calibration is collecting points
+  // (or after it has). At idle it's a useless black void, so collapse it.
+  const active = $derived(pts.length > 0 || ($maslowState?.busy ?? false));
 
   function draw() {
     if (!canvas) return;
@@ -75,7 +78,11 @@
     <div class="done">✓ Calibration complete</div>
   {/if}
 
-  <canvas bind:this={canvas} width="320" height="240"></canvas>
+  {#if active}
+    <canvas bind:this={canvas} width="320" height="240"></canvas>
+  {:else}
+    <div class="idle">Waypoints appear here while calibration runs.</div>
+  {/if}
 </section>
 
 <style>
@@ -117,6 +124,11 @@
     border: 1px solid #1f5a36;
     border-radius: 7px;
     padding: 0.4em 0.6em;
+  }
+  .idle {
+    font-size: 0.8em;
+    opacity: 0.45;
+    padding: 0.2em 0;
   }
   canvas {
     display: block;

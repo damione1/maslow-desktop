@@ -30,10 +30,14 @@
     /** Calibration state code reported while this step is running. */
     busyCode: number | null;
     optional?: boolean;
+    /** Operator action with no firmware command (e.g. lower Z by hand). */
+    manual?: boolean;
   }
 
-  // Sequence follows the firmware transition matrix:
-  // retract → extend → take slack → calibrate → computing → ready to cut.
+  // Sequence follows the firmware transition matrix, with a manual Z-lowering
+  // step inserted before extend (the belts lock the axes once extending, so Z
+  // must be set down while it can still move):
+  // retract → lower Z → extend → take slack → calibrate → computing → ready.
   const STEPS: Step[] = [
     {
       key: "retract",
@@ -44,9 +48,18 @@
       busyCode: 1,
     },
     {
+      key: "lowerZ",
+      title: "Lower Z all the way down",
+      hint: "Jog Z down until the bit (or spindle nose) just touches the spoilboard. This can't be automatic — it depends on whether a bit is installed. Do it now: once the belts extend the axes are locked and Z can't move.",
+      cmd: null,
+      policy: null,
+      busyCode: null,
+      manual: true,
+    },
+    {
       key: "extend",
-      title: "Extend",
-      hint: "Pay the belts back out so they can be hooked to the sled.",
+      title: "Extend belts to MAXIMUM",
+      hint: "Let all four belts pay all the way out and stop on their own — do NOT press Stop. Calibration can't start until every belt reaches maximum and the state reads “Belts Extended”.",
       cmd: "$EXT",
       policy: "extend",
       busyCode: 3,
@@ -86,6 +99,10 @@
     },
   ];
 
+  // Client-side acknowledgement that the operator lowered Z (the firmware does
+  // not track this). Gates Extend so the Z step can't be skipped.
+  let zLowered = $state(false);
+
   const connected = $derived($wsState === "connected");
   const ap = $derived($actionPolicy);
   const mState = $derived($maslowState);
@@ -112,14 +129,14 @@
       ? null
       : ap?.take_slack
         ? {
-            label: "Reprendre — appliquer la tension",
-            hint: "Tend les courroies puis passe en Prêt à couper. Aucune recalibration nécessaire.",
+            label: "Resume — apply tension",
+            hint: "Tensions the belts and moves to Ready to Cut. No recalibration needed.",
             cmd: "$TKSLK",
           }
         : ap?.extend
           ? {
-              label: "Reprendre — étendre les courroies",
-              hint: "Déroule les courroies, puis applique la tension pour passer en Prêt à couper.",
+              label: "Resume — extend belts",
+              hint: "Pays the belts out, then apply tension to reach Ready to Cut.",
               cmd: "$EXT",
             }
           : null,
@@ -137,19 +154,19 @@
       case 1:
         return 0; // retracting
       case 2:
-        return 1; // retracted → extend next
+        return 1; // retracted → lower Z next
       case 3:
-        return 1; // extending
+        return 2; // extending
       case 4:
-        return 2; // extended → take slack / calibrate
+        return 3; // extended → take slack / calibrate
       case 5:
-        return 2; // taking slack
+        return 3; // taking slack
       case 6:
-        return 3; // calibrating
+        return 4; // calibrating
       case 9:
-        return 4; // computing
+        return 5; // computing
       case 7:
-        return 5; // ready to cut
+        return 6; // ready to cut
       default:
         return 0; // unknown / releasing tension → start over
     }
@@ -164,17 +181,34 @@
     return busy && STEPS[i].busyCode === code ? "busy" : "active";
   }
 
-  // Action enablement is the policy's job; we never re-derive prerequisites.
+  // Action enablement is the policy's job; we never re-derive firmware
+  // prerequisites — we only add the client-side Z acknowledgement on Extend.
   function canDo(s: Step): boolean {
-    return connected && s.policy != null && (ap?.[s.policy] ?? false);
+    if (!connected || s.policy == null || !(ap?.[s.policy] ?? false)) return false;
+    if (s.key === "extend" && !zLowered) return false;
+    return true;
+  }
+
+  // Plain-language reason an enabled-looking step is still blocked, so the user
+  // is never left staring at a dead button (the firmware error loop is already
+  // prevented by the policy gating; this removes the confusion behind it).
+  function disabledReason(s: Step): string | null {
+    if (!connected) return "Not connected.";
+    if (s.key === "extend" && !zLowered)
+      return "Confirm Z is lowered all the way down first.";
+    if (canDo(s)) return null;
+    if (s.key === "takeSlack" || s.key === "calibrate") {
+      if (code === 3) return "Belts still extending — wait until they reach MAXIMUM (state “Belts Extended”).";
+      if (code === 0 || code === 2)
+        return "Belts aren't extended to maximum. Retract → lower Z → Extend fully before calibrating.";
+      if (busy) return "Machine busy — let the current step finish.";
+    }
+    return null;
   }
 
   function run(cmd: string | null) {
     if (cmd) invoke("send_line", { line: cmd });
   }
-
-  const canStop = $derived(connected && (ap?.stop ?? false));
-  const canEstop = $derived(connected && (ap?.estop ?? false));
 </script>
 
 <section class="wizard">
@@ -191,9 +225,9 @@
   {#if calib}
     <div class="cal-badge" class:ok={calibrated}>
       {#if calibrated}
-        Calibré ✓ <small>(ancrages en mémoire)</small>
+        Calibrated ✓ <small>(anchors in memory)</small>
       {:else}
-        Non calibré <small>— calibration requise</small>
+        Not calibrated <small>— calibration required</small>
       {/if}
     </div>
   {/if}
@@ -204,7 +238,7 @@
 
   {#if resumeAction}
     <div class="resume">
-      <div class="resume-head">Reprise</div>
+      <div class="resume-head">Resume</div>
       <p class="resume-hint">{resumeAction.hint}</p>
       <button class="resume-go" onclick={() => run(resumeAction.cmd)}>
         {resumeAction.label}
@@ -215,8 +249,8 @@
   {#if resumeable}
     <button class="toggle" onclick={() => (showFull = !showFull)}>
       {fullVisible
-        ? "Masquer la séquence complète"
-        : "Calibration complète (première fois / récupération)"}
+        ? "Hide full sequence"
+        : "Full calibration (first time / recovery)"}
     </button>
   {/if}
 
@@ -235,9 +269,17 @@
           </div>
           {#if st === "active" || st === "busy"}
             <div class="hint">{s.hint}</div>
+            {#if s.cmd && disabledReason(s)}
+              <div class="reason">{disabledReason(s)}</div>
+            {/if}
           {/if}
         </div>
-        {#if s.cmd}
+        {#if s.manual}
+          <label class="ack" class:checked={zLowered}>
+            <input type="checkbox" bind:checked={zLowered} />
+            Z is down
+          </label>
+        {:else if s.cmd}
           <button
             class:go={s.key === "calibrate"}
             onclick={() => run(s.cmd)}
@@ -253,20 +295,10 @@
 
   {#if busy}
     <div class="settling-hint">
-      En cas de blocage après un Stop, utilisez <strong>Retract</strong> (panneau
-      Maslow) — c'est la seule action que le firmware accepte depuis un état
-      transitoire.
+      If stuck after a Stop, use <strong>Retract</strong> (Maslow panel) — it's the
+      only action the firmware accepts from a transitional state.
     </div>
   {/if}
-
-  <div class="stop-row">
-    <button class="warn" onclick={() => run("$STOP")} disabled={!canStop}>
-      Stop
-    </button>
-    <button class="danger" onclick={() => run("$ESTOP")} disabled={!canEstop}>
-      E-Stop
-    </button>
-  </div>
 
   {#if !connected}
     <div class="offline">Connect to start the calibration workflow.</div>
@@ -381,6 +413,31 @@
     opacity: 0.6;
     margin-top: 0.15em;
   }
+  .reason {
+    font-size: 0.75em;
+    margin-top: 0.3em;
+    color: #e0a83d;
+  }
+  .ack {
+    display: flex;
+    align-items: center;
+    gap: 0.35em;
+    font-size: 0.78em;
+    white-space: nowrap;
+    cursor: pointer;
+    padding: 0.4em 0.6em;
+    border: 1px solid #555;
+    border-radius: 8px;
+    background: #2b2b2b;
+  }
+  .ack.checked {
+    border-color: #2e7d32;
+    background: #14301f;
+    color: #3ddc84;
+  }
+  .ack input {
+    cursor: pointer;
+  }
   button {
     padding: 0.4em 0.7em;
     border-radius: 8px;
@@ -471,21 +528,6 @@
   }
   .settling-hint strong {
     color: #ffd166;
-  }
-  .stop-row {
-    display: flex;
-    gap: 0.45em;
-  }
-  .stop-row button {
-    flex: 1;
-  }
-  .stop-row .warn {
-    background: #b8860b;
-    border-color: #b8860b;
-  }
-  .stop-row .danger {
-    background: #8b2e2e;
-    border-color: #8b2e2e;
   }
   .offline {
     font-size: 0.8em;

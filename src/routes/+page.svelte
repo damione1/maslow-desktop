@@ -27,6 +27,7 @@
   import FileBrowser from "$lib/components/FileBrowser.svelte";
 
   let host = $state($connection.host);
+  let fwVersion = $state<string | null>(null);
 
   const connected = $derived($wsState === "connected");
 
@@ -40,10 +41,17 @@
     persistHost(host);
     connection.update((c) => ({ ...c, host }));
     await invoke("connect_ws", { host });
+    // Best-effort firmware version for the topbar (parsed from [ESP800]).
+    try {
+      fwVersion = await invoke<string | null>("firmware_version", { host });
+    } catch {
+      fwVersion = null;
+    }
   }
 
   async function disconnect() {
     await invoke("disconnect_ws");
+    fwVersion = null;
   }
 
   // 0x18 = Ctrl-X soft reset — the universal mid-cut kill. Always reachable from
@@ -66,6 +74,9 @@
       />
       {#if connected}
         <span class="badge ok">● Connected</span>
+        {#if fwVersion}
+          <span class="fw" title="Maslow firmware version">FW {fwVersion}</span>
+        {/if}
         <button class="ghost" onclick={disconnect}>Disconnect</button>
       {:else}
         <span class="badge off">● Disconnected</span>
@@ -105,15 +116,15 @@
         <FileBrowser />
       </div>
       <div class="panel" class:active={$activeTab === "calibrate"}>
-        <!-- Waypoint canvas spans full width on top: it's the calibration
-             "map" and reads best wide, and a full-width panel guarantees it a
-             real drawing size. The guided wizard and the contextual Maslow
-             panel sit below as two side-by-side columns. -->
-        <CalibrationView />
+        <!-- Controls first: the guided wizard and the contextual Maslow panel
+             as two side-by-side columns. The waypoint "map" and the solver sit
+             below — the map only fills out once calibration is running, so it
+             stays out of the way at idle. -->
         <div class="cal-cols">
           <CalibrationWizard />
           <MaslowPanel />
         </div>
+        <CalibrationView />
         <CalibrationSolver />
       </div>
       <div class="panel" class:active={$activeTab === "config"}>
@@ -173,6 +184,15 @@
   }
   .badge.off {
     color: #888;
+  }
+  .fw {
+    font-size: 0.78em;
+    color: #9bb4d8;
+    background: #20304d;
+    padding: 0.2em 0.55em;
+    border-radius: 6px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
   button {
     padding: 0.45em 1em;

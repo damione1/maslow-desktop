@@ -100,7 +100,7 @@
     </span>
     {#if info}
       <span class="flags">
-        <span class:on={calibrated}>calibré</span>
+        <span class:on={calibrated}>calibrated</span>
         <span class:on={info.homed}>homed</span>
         <span class:on={info.extended}>extended</span>
         {#if info.calibrationInProgress}<span class="on cal">calibrating</span>{/if}
@@ -128,8 +128,8 @@
 
   {#if settling}
     <div class="settling">
-      Machine en cours de stabilisation… <strong>Retract</strong> ramène à un état
-      connu si elle reste bloquée.
+      Machine settling… <strong>Retract</strong> returns it to a known state if it
+      stays stuck.
     </div>
   {/if}
 

@@ -239,6 +239,12 @@ fn is_maslow_action(line: &str) -> bool {
 const BURST_POLLS: u32 = 12;
 const BURST_INTERVAL_MS: u64 = 250;
 
+/// Status-report (`?`) polling cadence. Fast while the machine is moving so the
+/// DRO stays smooth, slow at idle to match the embedded UI's calm rhythm (its
+/// default `?` interval is 3 s) and avoid hammering the firmware while parked.
+const STATUS_FAST_MS: u64 = 250;
+const STATUS_IDLE_MS: u64 = 1000;
+
 /// Send as many queued G-code lines as the firmware RX buffer allows.
 async fn pump(write: &mut WsSink, job: &mut Option<Job>) -> Result<(), String> {
     if let Some(j) = job.as_mut() {
@@ -273,7 +279,8 @@ async fn run_socket(
     let _ = app.emit("ws-state", "connected");
 
     let mut buf = String::new();
-    let mut status_tick = tokio::time::interval(Duration::from_millis(250));
+    let mut status_period = STATUS_FAST_MS;
+    let mut status_tick = tokio::time::interval(Duration::from_millis(status_period));
     // Maslow telemetry poll. Skipped while a job streams: `$Maslow/getInfo`
     // returns an `ok` that would corrupt the job's char-counting.
     let mut maslow_tick = tokio::time::interval(Duration::from_millis(1500));
@@ -428,6 +435,22 @@ async fn run_socket(
                 }
                 if last_activity.elapsed() > Duration::from_secs(20) {
                     return Err("watchdog: no activity for 20s".into());
+                }
+                // Adapt the `?` cadence to motion: fast while moving, calm at
+                // idle. interval_at delays the first new tick by a full period
+                // so changing rate does not fire an extra immediate poll.
+                let moving = matches!(
+                    ctx.fluidnc_state.as_str(),
+                    "Run" | "Jog" | "Home" | "Homing"
+                );
+                let desired = if moving { STATUS_FAST_MS } else { STATUS_IDLE_MS };
+                if desired != status_period {
+                    status_period = desired;
+                    let period = Duration::from_millis(status_period);
+                    status_tick = tokio::time::interval_at(
+                        tokio::time::Instant::now() + period,
+                        period,
+                    );
                 }
                 }
             }
@@ -680,7 +703,23 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         }
         return;
     }
+    if is_console_chatter(line) {
+        return;
+    }
     let _ = app.emit("grbl-line", line.to_string());
+}
+
+/// Periodic firmware chatter the embedded UI also hides from its (non-verbose)
+/// console: the idle heartbeat ping and the belt-tension telemetry stream. These
+/// are what made our console scroll at idle. Mirrors `commands.js` filters.
+fn is_console_chatter(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("[MSG:INFO: Heartbeat]")
+        || (t.starts_with("[MSG:INFO:")
+            && t.contains("TLC:")
+            && t.contains("TRC:")
+            && t.contains("BLC:")
+            && t.contains("BRC:"))
 }
 
 /// Flatten a captured `$CD` YAML dump and emit it as `config-dump`, plus the
