@@ -1,7 +1,13 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
-  import { maslowInfo, maslowState, actionPolicy, anchors } from "$lib/stores/maslow";
+  import {
+    maslowInfo,
+    maslowState,
+    actionPolicy,
+    anchors,
+    maslowConfig,
+  } from "$lib/stores/maslow";
 
   const connected = $derived($wsState === "connected");
   const policy = $derived($maslowState);
@@ -23,6 +29,12 @@
   const canComply = $derived(can("comply"));
   const canTakeSlack = $derived(can("take_slack"));
   const canCalibrate = $derived(can("calibrate"));
+  // Park is a motion move to a safe position; only meaningful once calibrated
+  // and idle (READY_TO_CUT). `jog` is true only when FluidNC is Idle and no job
+  // runs, so it also covers the job lock.
+  const canPark = $derived(connected && policy?.code === 7 && (ap?.jog ?? false));
+  // Diagnostic commands are anyState in the firmware; gate on a live link only.
+  const canDiag = $derived(connected && (ap?.jog ?? false));
 
   // Short command names the firmware accepts (the embedded UI uses these;
   // the long `$Maslow/...` forms are rejected with error:3).
@@ -34,10 +46,31 @@
     calibrate: "$CAL",
     stop: "$STOP",
     estop: "$ESTOP",
+    test: "$TEST",
+    setZStop: "$SETZSTOP",
+    calReset: "$CALRESET",
   } as const;
 
   function action(cmd: keyof typeof CMD) {
     invoke("send_line", { line: CMD[cmd] });
+  }
+
+  // Park: lift Z to a safe height (work coords) then move to the park position
+  // in machine coords. Mirrors the embedded UI's READY_TO_CUT park sequence,
+  // using the configured park offsets (defaults if config not loaded).
+  async function park() {
+    const c = $maslowConfig;
+    const z = c?.park_z ?? 2.0;
+    const x = c?.park_x ?? 0.0;
+    const y = c?.park_y ?? 0.0;
+    await invoke("send_line", { line: `G90 G0 Z${z}` });
+    await invoke("send_line", { line: `G53 G0 Y${y} X${x}` });
+  }
+
+  let showDiag = $state(false);
+  function diag(cmd: "test" | "setZStop" | "calReset", confirmMsg?: string) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    action(cmd);
   }
 
   function belt(label: string, len: number, err: number) {
@@ -112,12 +145,38 @@
     <button class="go" onclick={() => action("calibrate")} disabled={!canCalibrate}>
       Calibrate
     </button>
+    <button onclick={park} disabled={!canPark} title="Lift Z and move to the configured park position">
+      Park
+    </button>
   </div>
 
   <div class="actions stop-row">
     <button class="warn" onclick={() => action("stop")} disabled={!can("stop")}>Stop</button>
     <button class="danger" onclick={() => action("estop")} disabled={!can("estop")}>E-Stop</button>
   </div>
+
+  <details class="diag" bind:open={showDiag}>
+    <summary>Diagnostics</summary>
+    <div class="actions diag-row">
+      <button
+        onclick={() => diag("test", "Run the motor/sensor self-test? The machine will move.")}
+        disabled={!canDiag}
+        title="Run the Maslow self-test ($TEST)">Test</button
+      >
+      <button
+        onclick={() => diag("setZStop")}
+        disabled={!canDiag}
+        title="Set the current Z position as the Z stop ($SETZSTOP)">Set Z Stop</button
+      >
+      <button
+        class="warn"
+        onclick={() =>
+          diag("calReset", "Reset the calibration state machine? Use this to recover a stuck calibration.")}
+        disabled={!canDiag}
+        title="Reset the calibration state ($CALRESET)">Reset Calibration</button
+      >
+    </div>
+  </details>
 </section>
 
 <style>
@@ -266,5 +325,23 @@
   .stop-row button.danger {
     background: #8b2e2e;
     border-color: #8b2e2e;
+  }
+  .diag {
+    margin-top: 0.5em;
+    border-top: 1px solid #2a2a2a;
+    padding-top: 0.4em;
+  }
+  .diag summary {
+    cursor: pointer;
+    color: #9a9a9a;
+    font-size: 0.85em;
+    user-select: none;
+  }
+  .diag-row {
+    margin-top: 0.4em;
+  }
+  .diag-row button.warn {
+    background: #b8860b;
+    border-color: #b8860b;
   }
 </style>
