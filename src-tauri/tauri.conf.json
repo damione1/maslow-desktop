@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "maslow-desktop",
-        "width": 800,
-        "height": 600
+        "title": "Maslow Desktop",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 900,
+        "minHeight": 640,
+        "center": true
       }
     ],
     "security": {

@@ -25,7 +25,6 @@
   import ControlOptions from "$lib/components/ControlOptions.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
   import ToolpathView from "$lib/components/ToolpathView.svelte";
-  import FileBrowser from "$lib/components/FileBrowser.svelte";
 
   let host = $state($connection.host);
   let fwVersion = $state<string | null>(null);
@@ -114,7 +113,6 @@
       <div class="panel" class:active={$activeTab === "job"}>
         <JobPanel />
         <ToolpathView />
-        <FileBrowser />
       </div>
       <div class="panel" class:active={$activeTab === "calibrate"}>
         <!-- Controls first: the guided wizard and the contextual Maslow panel
