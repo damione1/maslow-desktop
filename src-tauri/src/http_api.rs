@@ -357,9 +357,58 @@ pub async fn ping_machine(host: String) -> PingResult {
     }
 }
 
+/// Firmware version the embedded UI shows, parsed from the `[ESP800]`
+/// `FW version: FluidNC <ver>` line (e.g. "1.22"). Returns None if unreachable
+/// or unparseable so the topbar can simply hide it.
+#[tauri::command]
+pub async fn firmware_version(host: String) -> Option<String> {
+    let base = normalize_host(&host);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .cookie_store(true)
+        .build()
+        .ok()?;
+    let url = format!("{base}/command?plain=%5BESP800%5D");
+    let body = client.get(&url).send().await.ok()?.text().await.ok()?;
+    parse_fw_version(&body)
+}
+
+/// Pull the version token out of a `FW version: FluidNC <ver> # …` line. Drops
+/// the leading "FluidNC" label and keeps the first whitespace/`#`-delimited
+/// token (a git-describe string like `1.22` or `1.22-3-gabc`).
+fn parse_fw_version(body: &str) -> Option<String> {
+    for line in body.lines() {
+        if let Some((_, after)) = line.split_once("FW version:") {
+            let after = after.trim();
+            let after = after.strip_prefix("FluidNC").map(str::trim).unwrap_or(after);
+            let ver = after
+                .split([' ', '#', '\t'])
+                .find(|t| !t.is_empty())
+                .unwrap_or("");
+            if !ver.is_empty() {
+                return Some(ver.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_firmware_version() {
+        assert_eq!(
+            parse_fw_version("FW version: FluidNC 1.22 # FW target:grbl-embedded"),
+            Some("1.22".to_string())
+        );
+        assert_eq!(
+            parse_fw_version("[MSG]\nFW version: FluidNC 1.22-3-gabc  # FW HW:Direct SD"),
+            Some("1.22-3-gabc".to_string())
+        );
+        assert_eq!(parse_fw_version("no version here"), None);
+    }
 
     #[test]
     fn parses_format_bytes() {

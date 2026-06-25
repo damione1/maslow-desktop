@@ -19,6 +19,7 @@ pub fn run() {
             calibration::solve_calibration,
             toolpath::load_toolpath,
             http_api::ping_machine,
+            http_api::firmware_version,
             http_api::read_maslow_anchors,
             http_api::read_maslow_config,
             http_api::write_maslow_setting,
