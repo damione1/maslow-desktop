@@ -5,6 +5,8 @@
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
   import { jobProgress, loadSavedJob, loadToolpath, type SavedJob } from "$lib/stores/job";
+  import Modal from "./Modal.svelte";
+  import FileBrowser from "./FileBrowser.svelte";
 
   const GCODE_FILTER = {
     name: "G-code",
@@ -16,6 +18,7 @@
   let saved = $state<SavedJob | null>(null);
   let busy = $state(false);
   let notice = $state<string>("");
+  let showSd = $state(false);
 
   const connected = $derived($wsState === "connected");
   const job = $derived($jobProgress);
@@ -136,6 +139,9 @@
       Open G-code…
     </button>
     <span class="filename">{fileName || "no file selected"}</span>
+    <button class="ghost" onclick={() => (showSd = true)} disabled={!connected}>
+      SD Files…
+    </button>
     <button onclick={uploadToSd} disabled={!connected || busy} class="ghost">
       Upload to SD
     </button>
@@ -175,6 +181,12 @@
     {/if}
   </div>
 </section>
+
+{#if showSd}
+  <Modal title="SD Files" onclose={() => (showSd = false)}>
+    <FileBrowser />
+  </Modal>
+{/if}
 
 <style>
   .job {
