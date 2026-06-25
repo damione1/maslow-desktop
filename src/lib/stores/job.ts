@@ -30,6 +30,7 @@ export interface ToolpathSegment {
   x1: number;
   y1: number;
   rapid: boolean;
+  line: number;
 }
 
 export interface Toolpath {
@@ -43,13 +44,17 @@ export interface Toolpath {
 
 /** Parsed 2D toolpath of the currently selected local file, or null. */
 export const toolpath = writable<Toolpath | null>(null);
+/** Path the current toolpath was parsed from, to match against a running job. */
+export const toolpathPath = writable<string | null>(null);
 
 /** Parse a local G-code file into a toolpath for preview + trace boundary. */
 export async function loadToolpath(path: string): Promise<void> {
   try {
     toolpath.set(await invoke<Toolpath>("load_toolpath", { path }));
+    toolpathPath.set(path);
   } catch {
     toolpath.set(null);
+    toolpathPath.set(null);
   }
 }
 

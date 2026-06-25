@@ -15,6 +15,9 @@ pub struct Segment {
     pub y1: f32,
     /// True for G0 rapids, false for G1/G2/G3 cutting moves.
     pub rapid: bool,
+    /// Index of the source line (into the same cleaned-line list the streamer
+    /// uses), so live progress can highlight cut-so-far vs remaining.
+    pub line: usize,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
@@ -110,7 +113,7 @@ pub fn parse_toolpath(lines: &[String]) -> Toolpath {
         *maxy = maxy.max(py);
     };
 
-    for line in lines {
+    for (li, line) in lines.iter().enumerate() {
         let ws = words(line);
         if ws.is_empty() {
             continue;
@@ -170,6 +173,7 @@ pub fn parse_toolpath(lines: &[String]) -> Toolpath {
                 x1: nx as f32,
                 y1: ny as f32,
                 rapid: mode == 0,
+                line: li,
             });
             if mode == 1 {
                 bump(x, y, &mut minx, &mut miny, &mut maxx, &mut maxy);
@@ -197,6 +201,7 @@ pub fn parse_toolpath(lines: &[String]) -> Toolpath {
                             x1: ax as f32,
                             y1: ay as f32,
                             rapid: false,
+                            line: li,
                         });
                         bump(ax, ay, &mut minx, &mut miny, &mut maxx, &mut maxy);
                         px = ax;
@@ -211,6 +216,7 @@ pub fn parse_toolpath(lines: &[String]) -> Toolpath {
                         x1: nx as f32,
                         y1: ny as f32,
                         rapid: false,
+                        line: li,
                     });
                     bump(x, y, &mut minx, &mut miny, &mut maxx, &mut maxy);
                     bump(nx, ny, &mut minx, &mut miny, &mut maxx, &mut maxy);
@@ -288,6 +294,10 @@ mod tests {
         assert!(!tp.segments[1].rapid);
         assert!(tp.has_bounds);
         assert_eq!((tp.min_x, tp.min_y, tp.max_x, tp.max_y), (10.0, 10.0, 40.0, 30.0));
+        // Source line indices track the cleaned-line list (0-based), so live
+        // progress can compare against the streamer's acked count.
+        assert_eq!(tp.segments[0].line, 1); // "G0 X10 Y10"
+        assert_eq!(tp.segments[4].line, 5); // "G1 X10 Y10"
     }
 
     #[test]
