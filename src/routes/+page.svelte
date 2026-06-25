@@ -23,6 +23,7 @@
   import FluidNCConfig from "$lib/components/FluidNCConfig.svelte";
   import JogControls from "$lib/components/JogControls.svelte";
   import JobPanel from "$lib/components/JobPanel.svelte";
+  import ToolpathView from "$lib/components/ToolpathView.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
 
   let host = $state($connection.host);
@@ -100,6 +101,7 @@
            MaslowConfig don't re-fetch from the machine on every tab switch. -->
       <div class="panel" class:active={$activeTab === "job"}>
         <JobPanel />
+        <ToolpathView />
         <FileBrowser />
       </div>
       <div class="panel" class:active={$activeTab === "calibrate"}>
