@@ -49,6 +49,59 @@ fn join_dir(dir: &str, name: &str) -> String {
     }
 }
 
+/// Parse a firmware `formatBytes` string (e.g. `"7.40 GB"`, `"512 B"`) back into
+/// bytes. Approximate (the firmware rounds to 2 decimals) but fine for a guard.
+fn parse_bytes(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (num, unit) = s.split_once(' ')?;
+    let v: f64 = num.trim().parse().ok()?;
+    let mult: f64 = match unit.trim().to_ascii_uppercase().as_str() {
+        "B" => 1.0,
+        "KB" => 1024.0,
+        "MB" => 1024f64.powi(2),
+        "GB" => 1024f64.powi(3),
+        "TB" => 1024f64.powi(4),
+        _ => return None,
+    };
+    Some((v * mult) as u64)
+}
+
+/// Human-readable byte size for error messages.
+fn human_bytes(b: u64) -> String {
+    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = b as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < U.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{b} B")
+    } else {
+        format!("{v:.2} {}", U[i])
+    }
+}
+
+/// Best-effort free space on the SD card (bytes) via the listing endpoint, which
+/// reports `total`/`used` as formatted strings. Returns None if unavailable or
+/// unparseable, in which case the caller skips the pre-flight check.
+async fn sd_free_bytes(client: &reqwest::Client, base: &str, dir: &str) -> Option<u64> {
+    let url = format!("{base}/upload");
+    let resp = client
+        .get(&url)
+        .query(&[("path", dir), ("action", "list")])
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let total = parse_bytes(v.get("total")?.as_str()?)?;
+    let used = parse_bytes(v.get("used")?.as_str()?)?;
+    Some(total.saturating_sub(used))
+}
+
 /// Upload a local file to the machine's SD card via POST /upload (multipart),
 /// matching the ESP3D form: `path`, `<fullpath>S` = size, `myfile[]` = file.
 #[tauri::command]
@@ -65,6 +118,22 @@ pub async fn upload_file(
     let dir = if dir.is_empty() { "/".to_string() } else { dir };
     let full = join_dir(&dir, &name);
 
+    let client = http_client(Duration::from_secs(120))?;
+
+    // Pre-flight free-space check: fail fast with a clear message rather than
+    // half-filling the card. The firmware also rejects an over-size upload at
+    // uploadStart, so this is only a friendly early guard (and it's skipped if
+    // the listing can't be parsed).
+    if let Some(free) = sd_free_bytes(&client, &base, &dir).await {
+        if size as u64 > free {
+            return Err(format!(
+                "Not enough space on the SD card: {} needed, {} free.",
+                human_bytes(size as u64),
+                human_bytes(free)
+            ));
+        }
+    }
+
     // Match the embedded UI's form exactly: `path` (dir), `<fullpath>S` (size,
     // sent before the file so it's available at UPLOAD_FILE_START), then the
     // file part named `myfile[]` whose filename is the full path.
@@ -74,7 +143,6 @@ pub async fn upload_file(
         .text(format!("{full}S"), size.to_string())
         .part("myfile[]", part);
 
-    let client = http_client(Duration::from_secs(120))?;
     let url = format!("{base}/upload");
 
     // Silence the WebSocket polling for the duration: the firmware's SD/flash
@@ -286,5 +354,27 @@ pub async fn ping_machine(host: String) -> PingResult {
             PingResult { reachable: status == 200, status, info: body }
         }
         Err(e) => PingResult { reachable: false, status: 0, info: format!("unreachable: {e}") },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_format_bytes() {
+        assert_eq!(parse_bytes("512 B"), Some(512));
+        assert_eq!(parse_bytes("1.00 KB"), Some(1024));
+        assert_eq!(parse_bytes("2.00 MB"), Some(2 * 1024 * 1024));
+        assert_eq!(parse_bytes("7.40 GB"), Some((7.40 * 1024f64.powi(3)) as u64));
+        assert_eq!(parse_bytes("garbage"), None);
+        assert_eq!(parse_bytes("1.0 PB"), None);
+    }
+
+    #[test]
+    fn formats_human_bytes() {
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(1024), "1.00 KB");
+        assert_eq!(human_bytes(1024 * 1024), "1.00 MB");
     }
 }
