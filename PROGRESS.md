@@ -192,6 +192,15 @@ Ajoutés à `MaslowPanel.svelte` (aucun changement Rust — réutilise `send_lin
 - **Reste optionnel** : envelope « shaped » (vs rectangle) pour trace boundary.
 - **Tooltips panneau générique** : non ajoutés (197 champs ; le `title`=chemin suffit, les params Maslow importants sont tooltipés dans le panneau curaté).
 
+## Fix critique — upload SD vs polling WS concurrent (reboot loop)
+**Symptôme utilisateur** : après un upload `.nc` via l'app, la Maslow reboot en boucle. **Diagnostic** (comparaison avec l'UI intégrée) :
+- ✅ **Endpoint correct** : `/upload` = carte **SD** (`SDFileUpload`/`fileUpload(sdName)`), pas le flash de config (`/files`). La config `Maslow.yaml` (flash) n'a **pas** été touchée.
+- ✅ **Multipart identique** à l'UI intégrée (`files.js::BuildFileUploadFormData`) : champ `path` (dir), `<fullpath>S` (taille, envoyé **avant** le fichier), `myfile[]` avec filename = chemin complet ; notre `join_dir` produit le même `/fichier.nc` ; le `<full>S` matche ce que le firmware reconstruit (`upload.filename + "S"`).
+- 🔴 **Différence trouvée** : l'UI intégrée appelle **`disablePingForUpload()`** (socket.js) avant l'upload et `restorePingAfterUpload()` après — elle **suspend son polling** pendant l'écriture. **Notre app continuait de marteler le firmware en WS** (`?` 250 ms + `$MINFO`/`$GSTATE` 1.5 s) pendant l'upload. Or l'écriture SD/flash **stalle les deux cœurs** (commentaire firmware `Maslow.cpp:215`) — le trafic WS concurrent pendant cette fenêtre peut corrompre l'écriture (et la FAT de la SD → crash/hang au boot → reboot loop). C'est la cause la plus probable.
+- **Fix** : `ConnState.upload_active: Arc<AtomicBool>` ; `upload_file` (HTTP) le lève autour du POST (garde restaure même sur erreur) ; `run_socket` suspend **tous** les polls (`?`/`$MINFO`/`$GSTATE`/burst) et garde `last_activity` frais (anti-watchdog 20 s) tant que `upload_active`. Calque fidèle de `disablePingForUpload`. **45 tests Rust verts, 0 warning, `npm run check` 0/0.**
+- **Récupération machine** (à faire côté utilisateur) : la SD est probablement corrompue → couper l'alim, **retirer la carte SD**, rallumer (si ça boote = SD confirmée coupable), puis **reformater la SD en FAT32** et recopier les fichiers. Le flash/firmware n'est pas en cause.
+- **Reste optionnel** : pré-check d'espace libre SD avant upload (l'UI intégrée ne le fait pas non plus, le firmware skippe le check si taille=0).
+
 ## Phases ultérieures (hors périmètre "jusqu'à Levenberg")
 - Phase 5 — Auth/login, OTA firmware (`/updatefw`), préférences, packaging signé Mac/Windows, auto-update.
 - « et + » (post-solver) : single-active-client (`ACTIVE_ID`, event `ws-pageid` déjà émis), rendu toolpath G-code du `.nc` dans le canvas. Reportés assumés : rename SD, overrides moteur manuels `$TLI/$TRO`.

@@ -60,6 +60,11 @@ pub struct ConnState {
     /// Running flag of the live connection task (a fresh one per connection,
     /// so superseded tasks shut down permanently instead of reconnecting).
     pub current: Mutex<Option<Arc<AtomicBool>>>,
+    /// Set while an HTTP file upload runs. The socket loop suspends all polling
+    /// (`?`/`$MINFO`/`$GSTATE`) while this is true: an SD/flash write stalls both
+    /// firmware cores, and hammering it with concurrent traffic during that
+    /// window can corrupt the write (the embedded UI disables its ping too).
+    pub upload_active: Arc<AtomicBool>,
 }
 
 /// Build the WebSocket URL. FluidNC serves the socket on (web port + 1),
@@ -94,8 +99,9 @@ pub async fn connect_ws(
     *state.tx.lock().await = Some(tx);
 
     let url = ws_url(&host);
+    let upload_active = state.upload_active.clone();
     tokio::spawn(async move {
-        connection_loop(app, url, rx, running).await;
+        connection_loop(app, url, rx, running, upload_active).await;
     });
     Ok(())
 }
@@ -182,13 +188,14 @@ async fn connection_loop(
     url: String,
     mut rx: UnboundedReceiver<WsCommand>,
     running: Arc<AtomicBool>,
+    upload_active: Arc<AtomicBool>,
 ) {
     // The job lives across reconnects: a dropped socket pauses it, the next
     // socket can resume on the user's request.
     let mut job: Option<Job> = None;
 
     while running.load(Ordering::SeqCst) {
-        match run_socket(&app, &url, &mut rx, &running, &mut job).await {
+        match run_socket(&app, &url, &mut rx, &running, &mut job, &upload_active).await {
             Ok(_) => {}
             Err(e) => {
                 let _ = app.emit("ws-error", e);
@@ -251,6 +258,7 @@ async fn run_socket(
     rx: &mut UnboundedReceiver<WsCommand>,
     running: &Arc<AtomicBool>,
     job: &mut Option<Job>,
+    upload_active: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     request
@@ -403,6 +411,12 @@ async fn run_socket(
                 }
             }
             _ = status_tick.tick() => {
+                // While a file upload runs, go quiet: the SD/flash write stalls
+                // both firmware cores, and concurrent socket traffic can corrupt
+                // it. Keep `last_activity` fresh so the watchdog does not trip.
+                if upload_active.load(Ordering::Relaxed) {
+                    last_activity = Instant::now();
+                } else {
                 write.send(Message::Binary(vec![b'?'])).await.map_err(|e| e.to_string())?;
                 // Abort a stuck config capture so polling resumes.
                 if let Some(started) = ctx.capture_started {
@@ -415,9 +429,12 @@ async fn run_socket(
                 if last_activity.elapsed() > Duration::from_secs(20) {
                     return Err("watchdog: no activity for 20s".into());
                 }
+                }
             }
             _ = maslow_tick.tick() => {
-                if ctx.capture.is_none() && !job.as_ref().map_or(false, |j| j.active()) {
+                if !upload_active.load(Ordering::Relaxed)
+                    && ctx.capture.is_none()
+                    && !job.as_ref().map_or(false, |j| j.active()) {
                     // Short command names ($MINFO/$GSTATE), as the embedded UI uses;
                     // the long `$Maslow/getInfo` form is rejected by the firmware.
                     let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
@@ -428,7 +445,8 @@ async fn run_socket(
                 // Fast follow-up after an action so the UI converges in a few
                 // hundred ms. Only $GSTATE (cheap, drives the policy); skipped
                 // during a job for the same char-counting reason as maslow_tick.
-                if !job.as_ref().map_or(false, |j| j.active()) {
+                if !upload_active.load(Ordering::Relaxed)
+                    && !job.as_ref().map_or(false, |j| j.active()) {
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
                 }
                 burst_remaining -= 1;
