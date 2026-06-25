@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
-  import { jobProgress, toolpath } from "$lib/stores/job";
+  import { jobProgress, toolpath, toolpathPath } from "$lib/stores/job";
   import { actionPolicy } from "$lib/stores/maslow";
 
   const W = 360;
@@ -24,11 +24,21 @@
       : null,
   );
 
-  $effect(() => {
-    draw($toolpath);
+  // Number of source lines confirmed cut, but only when the running job is the
+  // file this toolpath was parsed from (else don't highlight a stale preview).
+  const progressLine = $derived.by(() => {
+    const j = $jobProgress;
+    if (!j || ($toolpathPath && j.path !== $toolpathPath)) return null;
+    if (j.state !== "running" && j.state !== "paused" && j.state !== "interrupted")
+      return null;
+    return j.acked;
   });
 
-  function draw(t: typeof $toolpath) {
+  $effect(() => {
+    draw($toolpath, progressLine);
+  });
+
+  function draw(t: typeof $toolpath, done: number | null) {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -71,19 +81,53 @@
       ctx.setLineDash([]);
     }
 
-    // Rapids first (dim), then feeds (bright) on top.
+    const cutting = done != null;
+    const isDone = (sg: (typeof t.segments)[number]) => cutting && sg.line < done!;
+
+    // Rapids (dim, dashed).
     ctx.lineWidth = 1;
-    for (const pass of [true, false]) {
+    ctx.beginPath();
+    for (const sg of t.segments) {
+      if (!sg.rapid) continue;
+      ctx.moveTo(X(sg.x0), Y(sg.y0));
+      ctx.lineTo(X(sg.x1), Y(sg.y1));
+    }
+    ctx.strokeStyle = "#444";
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Pending feed moves — dimmed while a job is running so the cut part stands out.
+    ctx.beginPath();
+    for (const sg of t.segments) {
+      if (sg.rapid || isDone(sg)) continue;
+      ctx.moveTo(X(sg.x0), Y(sg.y0));
+      ctx.lineTo(X(sg.x1), Y(sg.y1));
+    }
+    ctx.strokeStyle = cutting ? "#3a4a63" : "#6ea8fe";
+    ctx.stroke();
+
+    // Cut-so-far feed moves — bright green, drawn on top.
+    if (cutting) {
       ctx.beginPath();
+      let cur: [number, number] | null = null;
       for (const sg of t.segments) {
-        if (sg.rapid !== pass) continue;
+        if (sg.rapid || !isDone(sg)) continue;
         ctx.moveTo(X(sg.x0), Y(sg.y0));
         ctx.lineTo(X(sg.x1), Y(sg.y1));
+        cur = [sg.x1, sg.y1];
       }
-      ctx.strokeStyle = pass ? "#444" : "#6ea8fe";
-      if (pass) ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = "#7ee08a";
+      ctx.lineWidth = 1.7;
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.lineWidth = 1;
+      // Current position marker at the end of the last cut segment.
+      if (cur) {
+        ctx.fillStyle = "#d8f0a0";
+        ctx.beginPath();
+        ctx.arc(X(cur[0]), Y(cur[1]), 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 
@@ -114,7 +158,11 @@
 <section class="tp">
   <header>
     <span>Toolpath</span>
-    {#if dims}
+    {#if progressLine !== null && $jobProgress?.total}
+      <span class="cutting">
+        ● {Math.round(($jobProgress.acked / $jobProgress.total) * 100)}% cut
+      </span>
+    {:else if dims}
       <span class="dims">{dims.w.toFixed(1)} × {dims.h.toFixed(1)} mm</span>
     {/if}
     <button class="trace" onclick={trace} disabled={!canTrace} title="Move around the job bounding box">
@@ -155,6 +203,11 @@
   }
   .dims {
     color: #9a9a9a;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+  }
+  .cutting {
+    color: #7ee08a;
     font-size: 0.85em;
     font-variant-numeric: tabular-nums;
   }

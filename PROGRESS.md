@@ -188,7 +188,8 @@ Ajoutés à `MaslowPanel.svelte` (aucun changement Rust — réutilise `send_lin
 - **Front** : store `toolpath` + `loadToolpath(path)` (`job.ts`) ; `ToolpathView.svelte` (canvas 360×260, auto-scalé sur **tous** les segments, Y flippé, rapides pointillés gris / coupes bleu, rectangle bbox ambré + dimensions mm) monté dans l'onglet Job entre JobPanel et FileBrowser. `JobPanel` appelle `loadToolpath` à la sélection d'un fichier **et** au montage si un job repris existe.
 - **Trace Boundary** (dans `ToolpathView`) : bouton qui envoie le périmètre du bbox (`G21 G90` + `G0` aux 4 coins + retour) via `send_line`, Z non bougé, avec confirm affichant les dimensions. Gaté connecté + idle (`actionPolicy.jog`) + hors job + bbox valide.
 - **Limites** : preview pour les fichiers **locaux** seulement (les fichiers SD lancés via `$SD/Run=` ne passent pas par `load_toolpath`) ; plan 2D (Z/feedrate ignorés) ; arcs R rares approximés (I/J priorisé). `npm run check` 0/0.
-- **Reste optionnel** : surligner la progression live sur le toolpath, envelope « shaped » (vs rectangle) pour trace boundary.
+- **Progression live (LIVRÉ)** : `Segment` porte son index de ligne source (`line`) — les index coïncident avec le streamer (même `load_gcode`). `ToolpathView` surligne en vert vif les segments dont `line < jobProgress.acked`, atténue le reste en bleu sombre, place un point à la position courante, et affiche « N% cut » dans l'en-tête. Surlignage actif seulement si le job en cours correspond au fichier prévisualisé (`jobProgress.path === toolpathPath`). +1 assertion de test (index de ligne). 45 tests Rust, `npm run check` 0/0.
+- **Reste optionnel** : envelope « shaped » (vs rectangle) pour trace boundary.
 - **Tooltips panneau générique** : non ajoutés (197 champs ; le `title`=chemin suffit, les params Maslow importants sont tooltipés dans le panneau curaté).
 
 ## Phases ultérieures (hors périmètre "jusqu'à Levenberg")
