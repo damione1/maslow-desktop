@@ -5,8 +5,11 @@
 //   GET/POST /upload           -> SD card file operations
 // In Phase 0 we only need a connectivity test.
 
+use crate::connection::ConnState;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
+use tauri::State;
 
 #[derive(Serialize)]
 pub struct PingResult {
@@ -49,7 +52,12 @@ fn join_dir(dir: &str, name: &str) -> String {
 /// Upload a local file to the machine's SD card via POST /upload (multipart),
 /// matching the ESP3D form: `path`, `<fullpath>S` = size, `myfile[]` = file.
 #[tauri::command]
-pub async fn upload_file(host: String, dir: String, local_path: String) -> Result<String, String> {
+pub async fn upload_file(
+    state: State<'_, ConnState>,
+    host: String,
+    dir: String,
+    local_path: String,
+) -> Result<String, String> {
     let base = normalize_host(&host);
     let bytes = std::fs::read(&local_path).map_err(|e| format!("read {local_path}: {e}"))?;
     let size = bytes.len();
@@ -57,6 +65,9 @@ pub async fn upload_file(host: String, dir: String, local_path: String) -> Resul
     let dir = if dir.is_empty() { "/".to_string() } else { dir };
     let full = join_dir(&dir, &name);
 
+    // Match the embedded UI's form exactly: `path` (dir), `<fullpath>S` (size,
+    // sent before the file so it's available at UPLOAD_FILE_START), then the
+    // file part named `myfile[]` whose filename is the full path.
     let part = reqwest::multipart::Part::bytes(bytes).file_name(full.clone());
     let form = reqwest::multipart::Form::new()
         .text("path", dir.clone())
@@ -65,19 +76,31 @@ pub async fn upload_file(host: String, dir: String, local_path: String) -> Resul
 
     let client = http_client(Duration::from_secs(120))?;
     let url = format!("{base}/upload");
-    let resp = client
-        .post(&url)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("upload: {e}"))?;
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    if status.is_success() {
-        Ok(body)
-    } else {
-        Err(format!("upload failed ({status}): {body}"))
+
+    // Silence the WebSocket polling for the duration: the firmware's SD/flash
+    // write stalls both cores, and concurrent traffic during that window can
+    // corrupt the write (the embedded UI disables its ping the same way). The
+    // guard restores polling even if the upload errors out.
+    let upload_active = state.upload_active.clone();
+    upload_active.store(true, Ordering::Relaxed);
+    let result = async {
+        let resp = client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| format!("upload: {e}"))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(format!("upload failed ({status}): {body}"))
+        }
     }
+    .await;
+    upload_active.store(false, Ordering::Relaxed);
+    result
 }
 
 /// List files in an SD directory: GET /upload?path=<p>&action=list.
