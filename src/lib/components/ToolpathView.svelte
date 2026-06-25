@@ -1,31 +1,43 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { wsState } from "$lib/stores/machine";
+  import { wsState, machineStatus } from "$lib/stores/machine";
   import { jobProgress, toolpath, toolpathPath } from "$lib/stores/job";
-  import { actionPolicy } from "$lib/stores/maslow";
+  import { actionPolicy, maslowConfig } from "$lib/stores/maslow";
 
-  const W = 360;
-  const H = 260;
-  let canvas: HTMLCanvasElement;
+  let canvas: HTMLCanvasElement | undefined = $state();
+  let wrap: HTMLDivElement | undefined = $state();
+
+  // Two views, like the embedded UI: the job on its own (auto-fit to the cut
+  // extent) or the job placed inside the full machine work area.
+  type View = "path" | "machine";
+  let view = $state<View>("path");
 
   const tp = $derived($toolpath);
+  const cfg = $derived($maslowConfig);
   const connected = $derived($wsState === "connected");
   const jobActive = $derived(
     $jobProgress?.state === "running" || $jobProgress?.state === "paused",
   );
-  // Idle motion is allowed (FluidNC Idle, no job) → jog flag from the policy.
   const canTrace = $derived(
     connected && !jobActive && ($actionPolicy?.jog ?? false) && (tp?.has_bounds ?? false),
   );
-
-  const dims = $derived(
-    tp?.has_bounds
-      ? { w: tp.max_x - tp.min_x, h: tp.max_y - tp.min_y }
-      : null,
+  const hasMachine = $derived(
+    !!cfg && cfg.work_area_x > 0 && cfg.work_area_y > 0,
   );
 
-  // Number of source lines confirmed cut, but only when the running job is the
-  // file this toolpath was parsed from (else don't highlight a stale preview).
+  const dims = $derived(
+    tp?.has_bounds ? { w: tp.max_x - tp.min_x, h: tp.max_y - tp.min_y } : null,
+  );
+
+  // Live tool position in work coordinates (same frame as the G-code).
+  const tool = $derived.by(() => {
+    const s = $machineStatus;
+    if (!s || s.wpos.length < 2) return null;
+    return { x: s.wpos[0], y: s.wpos[1] };
+  });
+
+  // Number of source lines confirmed cut, only when the running job matches the
+  // previewed file (else don't highlight a stale preview).
   const progressLine = $derived.by(() => {
     const j = $jobProgress;
     if (!j || ($toolpathPath && j.path !== $toolpathPath)) return null;
@@ -34,19 +46,59 @@
     return j.acked;
   });
 
-  $effect(() => {
-    draw($toolpath, progressLine);
+  // The machine work-area rectangle in work coords (centered on the configured
+  // offset), mirroring the firmware's workAreaX/Y + center offset.
+  const machineRect = $derived.by(() => {
+    if (!hasMachine || !cfg) return null;
+    const cx = cfg.work_area_center_offset_x ?? 0;
+    const cy = cfg.work_area_center_offset_y ?? 0;
+    return {
+      minx: cx - cfg.work_area_x / 2,
+      maxx: cx + cfg.work_area_x / 2,
+      miny: cy - cfg.work_area_y / 2,
+      maxy: cy + cfg.work_area_y / 2,
+    };
   });
 
-  function draw(t: typeof $toolpath, done: number | null) {
+  // Keep the backing store matched to the rendered box (responsive + HiDPI).
+  $effect(() => {
+    if (!canvas || !wrap) return;
+    const ro = new ResizeObserver(() => sizeAndDraw());
+    ro.observe(wrap);
+    sizeAndDraw();
+    return () => ro.disconnect();
+  });
+
+  // Redraw on any data change.
+  $effect(() => {
+    void [$toolpath, progressLine, view, tool, machineRect];
+    draw();
+  });
+
+  function sizeAndDraw() {
+    if (!canvas || !wrap) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.floor(wrap.clientWidth));
+    const h = Math.max(1, Math.floor(w / 2)); // 2:1 like the embedded viewer
+    canvas.style.height = `${h}px`;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    draw();
+  }
+
+  function draw() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, W, H);
+    const t = $toolpath;
     if (!t || t.segments.length === 0) return;
 
-    // View bounds over every segment endpoint (rapids included) so nothing is
-    // clipped, independent of the cutting-only bounding box.
+    // View bounds: every segment endpoint, plus the machine rectangle in
+    // "machine" view so the job is shown within the full work area.
     let minx = Infinity,
       miny = Infinity,
       maxx = -Infinity,
@@ -57,35 +109,54 @@
       maxx = Math.max(maxx, s.x0, s.x1);
       maxy = Math.max(maxy, s.y0, s.y1);
     }
+    const mr = machineRect;
+    if (view === "machine" && mr) {
+      minx = Math.min(minx, mr.minx);
+      miny = Math.min(miny, mr.miny);
+      maxx = Math.max(maxx, mr.maxx);
+      maxy = Math.max(maxy, mr.maxy);
+    }
+
     const w = maxx - minx || 1;
     const h = maxy - miny || 1;
-    const pad = 14;
+    const pad = 16 * dpr;
     const s = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
     const ox = pad + (W - 2 * pad - w * s) / 2;
     const oy = pad + (H - 2 * pad - h * s) / 2;
-    // Map gcode (x,y) → canvas px, flipping Y (gcode Y up, canvas Y down).
     const X = (px: number) => ox + (px - minx) * s;
     const Y = (py: number) => H - (oy + (py - miny) * s);
+
+    // Machine work-area rectangle (green) in machine view.
+    if (view === "machine" && mr) {
+      ctx.strokeStyle = "#2e7d32";
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.strokeRect(X(mr.minx), Y(mr.maxy), (mr.maxx - mr.minx) * s, (mr.maxy - mr.miny) * s);
+      // Work origin crosshair.
+      ctx.strokeStyle = "#b85c5c";
+      ctx.lineWidth = 1 * dpr;
+      const r = 6 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(X(0) - r, Y(0));
+      ctx.lineTo(X(0) + r, Y(0));
+      ctx.moveTo(X(0), Y(0) - r);
+      ctx.lineTo(X(0), Y(0) + r);
+      ctx.stroke();
+    }
 
     // Cutting-extent bounding box (dashed amber).
     if (t.has_bounds) {
       ctx.strokeStyle = "#7a6a3a";
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 1;
-      ctx.strokeRect(
-        X(t.min_x),
-        Y(t.max_y),
-        (t.max_x - t.min_x) * s,
-        (t.max_y - t.min_y) * s,
-      );
+      ctx.setLineDash([4 * dpr, 3 * dpr]);
+      ctx.lineWidth = 1 * dpr;
+      ctx.strokeRect(X(t.min_x), Y(t.max_y), (t.max_x - t.min_x) * s, (t.max_y - t.min_y) * s);
       ctx.setLineDash([]);
     }
 
-    const cutting = done != null;
-    const isDone = (sg: (typeof t.segments)[number]) => cutting && sg.line < done!;
+    const cutting = progressLine != null;
+    const isDone = (sg: (typeof t.segments)[number]) => cutting && sg.line < progressLine!;
 
     // Rapids (dim, dashed).
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 * dpr;
     ctx.beginPath();
     for (const sg of t.segments) {
       if (!sg.rapid) continue;
@@ -93,11 +164,11 @@
       ctx.lineTo(X(sg.x1), Y(sg.y1));
     }
     ctx.strokeStyle = "#444";
-    ctx.setLineDash([3, 3]);
+    ctx.setLineDash([3 * dpr, 3 * dpr]);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Pending feed moves — dimmed while a job is running so the cut part stands out.
+    // Pending feed moves — dimmed while a job runs so the cut part stands out.
     ctx.beginPath();
     for (const sg of t.segments) {
       if (sg.rapid || isDone(sg)) continue;
@@ -105,29 +176,31 @@
       ctx.lineTo(X(sg.x1), Y(sg.y1));
     }
     ctx.strokeStyle = cutting ? "#3a4a63" : "#6ea8fe";
+    ctx.lineWidth = 1.3 * dpr;
     ctx.stroke();
 
-    // Cut-so-far feed moves — bright green, drawn on top.
+    // Cut-so-far feed moves — bright green on top.
     if (cutting) {
       ctx.beginPath();
-      let cur: [number, number] | null = null;
       for (const sg of t.segments) {
         if (sg.rapid || !isDone(sg)) continue;
         ctx.moveTo(X(sg.x0), Y(sg.y0));
         ctx.lineTo(X(sg.x1), Y(sg.y1));
-        cur = [sg.x1, sg.y1];
       }
       ctx.strokeStyle = "#7ee08a";
-      ctx.lineWidth = 1.7;
+      ctx.lineWidth = 2 * dpr;
       ctx.stroke();
-      ctx.lineWidth = 1;
-      // Current position marker at the end of the last cut segment.
-      if (cur) {
-        ctx.fillStyle = "#d8f0a0";
-        ctx.beginPath();
-        ctx.arc(X(cur[0]), Y(cur[1]), 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    }
+
+    // Live tool position (magenta dot), driven by reported work position.
+    if (tool) {
+      ctx.fillStyle = "#e368d8";
+      ctx.beginPath();
+      ctx.arc(X(tool.x), Y(tool.y), 4 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#1a1a1a";
+      ctx.lineWidth = 1 * dpr;
+      ctx.stroke();
     }
   }
 
@@ -165,12 +238,27 @@
     {:else if dims}
       <span class="dims">{dims.w.toFixed(1)} × {dims.h.toFixed(1)} mm</span>
     {/if}
+
+    <div class="views">
+      <button class:on={view === "path"} onclick={() => (view = "path")}>Path</button>
+      <button
+        class:on={view === "machine"}
+        onclick={() => (view = "machine")}
+        disabled={!hasMachine}
+        title={hasMachine ? "Show the job inside the machine work area" : "Work-area size unknown — read the Maslow config first"}
+      >
+        Machine
+      </button>
+    </div>
+
     <button class="trace" onclick={trace} disabled={!canTrace} title="Move around the job bounding box">
       Trace boundary
     </button>
   </header>
 
-  <canvas bind:this={canvas} width={W} height={H}></canvas>
+  <div class="wrap" bind:this={wrap}>
+    <canvas bind:this={canvas}></canvas>
+  </div>
 
   {#if !tp || tp.segments.length === 0}
     <div class="hint">Select a local G-code file to preview its toolpath.</div>
@@ -179,6 +267,8 @@
       <span class="feed">— cut</span>
       <span class="rapid">— rapid</span>
       <span class="box">▢ bounds</span>
+      {#if view === "machine"}<span class="mach">▢ work area</span>{/if}
+      {#if tool}<span class="tool">● tool</span>{/if}
     </div>
   {/if}
 </section>
@@ -211,8 +301,31 @@
     font-size: 0.85em;
     font-variant-numeric: tabular-nums;
   }
-  .trace {
+  .views {
     margin-left: auto;
+    display: flex;
+    gap: 0;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .views button {
+    background: #222;
+    color: #cfcfcf;
+    border: none;
+    padding: 0.3em 0.7em;
+    cursor: pointer;
+    font-size: 0.82em;
+  }
+  .views button.on {
+    background: #396cd8;
+    color: #fff;
+  }
+  .views button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .trace {
     background: #45403d;
     color: #fff;
     border: 1px solid #5a5a5a;
@@ -224,14 +337,15 @@
     opacity: 0.45;
     cursor: default;
   }
-  canvas {
+  .wrap {
     width: 100%;
-    max-width: 360px;
-    height: auto;
+  }
+  canvas {
+    display: block;
+    width: 100%;
     background: #111;
     border: 1px solid #262626;
     border-radius: 6px;
-    align-self: center;
   }
   .hint {
     color: #9a9a9a;
@@ -242,6 +356,7 @@
     gap: 1em;
     font-size: 0.8em;
     color: #9a9a9a;
+    flex-wrap: wrap;
   }
   .legend .feed {
     color: #6ea8fe;
@@ -251,5 +366,11 @@
   }
   .legend .box {
     color: #7a6a3a;
+  }
+  .legend .mach {
+    color: #2e7d32;
+  }
+  .legend .tool {
+    color: #e368d8;
   }
 </style>
