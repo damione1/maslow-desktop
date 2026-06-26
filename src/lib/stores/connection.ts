@@ -1,4 +1,5 @@
 import { writable } from "svelte/store";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ConnState = "disconnected" | "testing" | "connected";
 
@@ -30,4 +31,25 @@ export function persistHost(host: string): void {
   if (typeof localStorage !== "undefined") {
     localStorage.setItem(STORAGE_KEY, host);
   }
+}
+
+/** Firmware version parsed from [ESP800] on connect, or null. Shown in chrome. */
+export const fwVersion = writable<string | null>(null);
+
+/** Connect the websocket and best-effort fetch the firmware version. Shared by
+ * the desktop topbar and the mobile connection sheet so the logic lives once. */
+export async function connectWs(host: string): Promise<void> {
+  persistHost(host);
+  connection.update((c) => ({ ...c, host }));
+  await invoke("connect_ws", { host });
+  try {
+    fwVersion.set(await invoke<string | null>("firmware_version", { host }));
+  } catch {
+    fwVersion.set(null);
+  }
+}
+
+export async function disconnectWs(): Promise<void> {
+  await invoke("disconnect_ws");
+  fwVersion.set(null);
 }

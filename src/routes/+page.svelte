@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { connection, persistHost } from "$lib/stores/connection";
+  import {
+    connection,
+    fwVersion,
+    connectWs,
+    disconnectWs,
+  } from "$lib/stores/connection";
   import {
     wsState,
     machineStatus,
@@ -11,7 +16,9 @@
   import { initJobListeners } from "$lib/stores/job";
   import { initMaslowListeners } from "$lib/stores/maslow";
   import { activeTab } from "$lib/stores/ui";
+  import { layout } from "$lib/stores/viewport";
   import AppShell from "$lib/components/AppShell.svelte";
+  import MobileShell from "$lib/components/MobileShell.svelte";
   import TabBar from "$lib/components/TabBar.svelte";
   import ConsoleDock from "$lib/components/ConsoleDock.svelte";
   import StatusPanel from "$lib/components/StatusPanel.svelte";
@@ -27,7 +34,6 @@
   import ToolpathView from "$lib/components/ToolpathView.svelte";
 
   let host = $state($connection.host);
-  let fwVersion = $state<string | null>(null);
 
   const connected = $derived($wsState === "connected");
 
@@ -38,20 +44,11 @@
   });
 
   async function connect() {
-    persistHost(host);
-    connection.update((c) => ({ ...c, host }));
-    await invoke("connect_ws", { host });
-    // Best-effort firmware version for the topbar (parsed from [ESP800]).
-    try {
-      fwVersion = await invoke<string | null>("firmware_version", { host });
-    } catch {
-      fwVersion = null;
-    }
+    await connectWs(host);
   }
 
   async function disconnect() {
-    await invoke("disconnect_ws");
-    fwVersion = null;
+    await disconnectWs();
   }
 
   // 0x18 = Ctrl-X soft reset — the universal mid-cut kill. Always reachable from
@@ -61,6 +58,9 @@
   }
 </script>
 
+{#if $layout !== "desktop"}
+  <MobileShell />
+{:else}
 <AppShell>
   {#snippet topbar()}
     <div class="topbar">
@@ -74,8 +74,8 @@
       />
       {#if connected}
         <span class="badge ok">● Connected</span>
-        {#if fwVersion}
-          <span class="fw" title="Maslow firmware version">FW {fwVersion}</span>
+        {#if $fwVersion}
+          <span class="fw" title="Maslow firmware version">FW {$fwVersion}</span>
         {/if}
         <button class="ghost" onclick={disconnect}>Disconnect</button>
       {:else}
@@ -145,6 +145,7 @@
     <ConsoleDock />
   {/snippet}
 </AppShell>
+{/if}
 
 <style>
   :global(body) {
