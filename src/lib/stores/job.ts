@@ -58,6 +58,18 @@ export async function loadToolpath(path: string): Promise<void> {
   }
 }
 
+/** Download an SD-card file and parse its toolpath for preview — without
+ * running it. Lets the operator check where a job sits on the board first. */
+export async function loadSdToolpath(host: string, path: string): Promise<void> {
+  try {
+    toolpath.set(await invoke<Toolpath>("sd_toolpath", { host, path }));
+    toolpathPath.set(`SD:${path}`);
+  } catch {
+    toolpath.set(null);
+    toolpathPath.set(null);
+  }
+}
+
 let started = false;
 
 export async function initJobListeners(): Promise<void> {

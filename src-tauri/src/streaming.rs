@@ -247,7 +247,7 @@ pub fn load_gcode(path: &str) -> Result<Vec<String>, String> {
 /// Strip a trailing `;` comment, trim, and drop empty / pure-comment lines.
 /// Dropping pure comments keeps the `ok` count one-to-one with our lines:
 /// FluidNC does not always emit an `ok` for a line that carries no command.
-fn clean_line(line: &str) -> Option<String> {
+pub(crate) fn clean_line(line: &str) -> Option<String> {
     let mut s = line;
     if let Some(idx) = s.find(';') {
         s = &s[..idx];

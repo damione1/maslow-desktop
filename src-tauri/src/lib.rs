@@ -27,6 +27,7 @@ pub fn run() {
             http_api::upload_file,
             http_api::list_files,
             http_api::delete_file,
+            http_api::sd_toolpath,
             connection::connect_ws,
             connection::disconnect_ws,
             connection::send_line,

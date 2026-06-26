@@ -2,7 +2,11 @@
   import { invoke } from "@tauri-apps/api/core";
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
-  import { jobProgress } from "$lib/stores/job";
+  import { jobProgress, loadSdToolpath } from "$lib/stores/job";
+
+  // Called after a successful preview so the parent (e.g. the SD modal) can
+  // close and reveal the toolpath underneath.
+  let { onpreview }: { onpreview?: () => void } = $props();
 
   interface SdEntry {
     name: string;
@@ -88,6 +92,16 @@
     invoke("send_line", { line: `$SD/Run=${fullPath(name)}` });
   }
 
+  async function preview(name: string) {
+    error = "";
+    try {
+      await loadSdToolpath($connection.host, fullPath(name));
+      onpreview?.();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   $effect(() => {
     if (connected && entries.length === 0 && !loading && !error) {
       refresh();
@@ -121,6 +135,7 @@
         {/if}
         <span class="size">{humanSize(e)}</span>
         {#if !isDir(e)}
+          <button class="sm" onclick={() => preview(e.name)}>Preview</button>
           <button class="sm" onclick={() => run(e.name)} disabled={jobActive}>Run</button>
           <button class="sm danger" onclick={() => del(e.name)}>✕</button>
         {/if}

@@ -232,6 +232,20 @@
     </div>
   {/if}
 
+  <!-- Calibrated but in UNKNOWN: the anchor geometry survives a reboot (it
+       lives in maslow.yaml), but belt-length tracking does not unless the last
+       stop saved it. A hard E-STOP / power-cycle loses it, so the firmware
+       genuinely needs Retract → Extend to re-zero the belts. Spell that out so
+       "Calibrated ✓ but must retract?!" isn't a contradiction. -->
+  {#if calibrated && code === 0}
+    <div class="lost-belts">
+      Calibration is kept, but the belt lengths were lost (hard stop or
+      power-cycle). <strong>Retract → Extend</strong> to re-zero the belts, then
+      apply tension. Next time use <strong>Stop</strong> (not E-Stop): it saves
+      the belt positions so you can resume with just <strong>Apply Tension</strong>.
+    </div>
+  {/if}
+
   {#if $calComplete}
     <div class="done-banner">✓ Calibration complete — ready to cut</div>
   {/if}
@@ -481,6 +495,18 @@
   .cal-badge small {
     font-weight: 400;
     opacity: 0.8;
+  }
+  .lost-belts {
+    font-size: 0.78em;
+    line-height: 1.4;
+    color: #e0a83d;
+    background: #2a2008;
+    border: 1px solid #6b4a1f;
+    border-radius: 7px;
+    padding: 0.45em 0.6em;
+  }
+  .lost-belts strong {
+    color: #ffd166;
   }
   .resume {
     background: #14223a;
