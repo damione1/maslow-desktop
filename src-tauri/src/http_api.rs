@@ -212,6 +212,33 @@ pub async fn delete_file(host: String, dir: String, filename: String) -> Result<
         .map_err(|e| format!("delete parse: {e}"))
 }
 
+/// Download a G-code file from the SD card and parse it into a 2D toolpath for
+/// preview — without running it. FluidNC serves SD files directly at
+/// `/SD/<path>` (the same href the embedded UI uses for downloads). `path` is
+/// the absolute SD path, e.g. `/job.nc` or `/sub/job.nc`.
+#[tauri::command]
+pub async fn sd_toolpath(host: String, path: String) -> Result<crate::toolpath::Toolpath, String> {
+    let base = normalize_host(&host);
+    let p = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
+    let client = http_client(Duration::from_secs(20))?;
+    let url = format!("{base}/SD{p}");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("download: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("download: HTTP {}", resp.status().as_u16()));
+    }
+    let body = resp.text().await.map_err(|e| format!("download read: {e}"))?;
+    let lines: Vec<String> = body.lines().filter_map(crate::streaming::clean_line).collect();
+    Ok(crate::toolpath::parse_toolpath(&lines))
+}
+
 /// Read the frame anchor configuration from the firmware
 /// (`$/kinematics/MaslowKinematics/`) over HTTP and parse it. Used to tell
 /// whether the machine already has valid anchors loaded (calibrated) so the UI

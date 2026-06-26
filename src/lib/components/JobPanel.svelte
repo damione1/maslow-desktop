@@ -184,7 +184,7 @@
 
 {#if showSd}
   <Modal title="SD Files" onclose={() => (showSd = false)}>
-    <FileBrowser />
+    <FileBrowser onpreview={() => (showSd = false)} />
   </Modal>
 {/if}
 
