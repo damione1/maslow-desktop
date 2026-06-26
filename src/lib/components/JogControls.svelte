@@ -4,6 +4,10 @@
   import { jobProgress } from "$lib/stores/job";
   import { actionPolicy } from "$lib/stores/maslow";
 
+  // `touch` enlarges the jog pad + controls for shop-floor finger use on
+  // phone/tablet; the compact desktop rail leaves it off.
+  let { touch = false }: { touch?: boolean } = $props();
+
   const STEPS = [0.1, 1, 10, 50];
   let step = $state(10);
   let feed = $state(1000);
@@ -48,7 +52,7 @@
   const zeroZ = () => line("G10 L20 P0 Z0");
 </script>
 
-<section class="jog">
+<section class="jog" class:touch>
   <header>
     <span>Manual Control</span>
     {#if jobActive}<span class="hint">locked during job</span>{/if}
@@ -219,5 +223,53 @@
   .danger {
     background: #8b2e2e;
     border-color: #8b2e2e;
+  }
+
+  /* Touch mode (phone/tablet): jog pad sized for fingers — ~15mm targets per
+     industrial HMI guidance — and the pad centred so both thumbs reach it. */
+  .jog.touch {
+    gap: 1em;
+  }
+  .jog.touch header {
+    font-size: 1em;
+  }
+  .jog.touch .grid {
+    justify-content: center;
+    gap: 1.6em;
+  }
+  .jog.touch .xy {
+    grid-template-columns: repeat(3, 76px);
+    grid-template-rows: repeat(3, 68px);
+    gap: 10px;
+  }
+  .jog.touch .z {
+    grid-template-rows: 68px 68px;
+    width: 76px;
+    gap: 10px;
+  }
+  .jog.touch button {
+    font-size: 1.1em;
+  }
+  .jog.touch .row button {
+    min-height: 48px;
+    padding: 0.5em 1em;
+    flex: 1;
+  }
+  .jog.touch .chip {
+    min-height: 44px;
+    min-width: 52px;
+    padding: 0.5em 0.9em;
+    font-size: 1em;
+    flex: 1;
+  }
+  .jog.touch .chips {
+    flex: 1;
+  }
+  .jog.touch .feed {
+    width: 100px;
+    min-height: 44px;
+  }
+  .jog.touch .steps {
+    flex-wrap: wrap;
   }
 </style>
