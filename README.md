@@ -18,7 +18,7 @@ It connects to your machine over the network and covers almost everything the bu
 - **State-machine aware** — every action is gated against the firmware's allowed transitions (retract → extend → take slack → calibrate → ready to cut). No more "why is my machine stuck in an unknown state?" after a mis-step.
 - **Guided calibration wizard** — each step is explained in everyday language, advances automatically as the firmware reports progress, and offers a one-tap **daily resume** (just re-apply tension) plus **release tension** so the belts and frame can rest overnight.
 - **One responsive app** — a real desktop app (macOS / Windows / Linux) and a touch-first layout for a tablet or phone mounted next to the machine, with **manual control as the landing screen**.
-- **Almost full feature parity** with the FluidNC web UI — jogging, jobs, SD card, settings and a raw console are all here.
+- **Almost the whole FluidNC web UI, re-implemented** — jogging, jobs, SD card, settings and a raw console — with UX improvements layered on top (the guided wizard being the headline).
 
 ## Features
 
