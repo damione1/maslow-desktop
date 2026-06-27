@@ -28,6 +28,15 @@ It connects to your machine over the network and covers almost everything the bu
 
 ![Calibration on desktop](img/desktop-calibrate.png)
 
+## Download
+
+Prebuilt installers are on the [**Releases**](https://github.com/damione1/maslow-desktop/releases/latest) page:
+
+- **macOS** — `.dmg` (Apple Silicon & Intel)
+- **Windows** — `.msi` installer
+
+> macOS builds aren't notarized yet, so the first launch needs a right-click → **Open** to clear Gatekeeper. An Android `.apk` will be added once mobile signing is set up.
+
 ## Getting started
 
 You'll need a Maslow running **FluidNC** reachable on your network (by `maslow.local` or its IP).
