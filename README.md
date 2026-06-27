@@ -7,7 +7,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![FluidNC v1.21+](https://img.shields.io/badge/FluidNC-v1.21%2B-success)
 
-A friendly control panel for the [Maslow CNC](https://www.maslowcnc.com/) running FluidNC — on **desktop, tablet and phone**.
+A friendly control panel for the [Maslow CNC](https://www.maslowcnc.com/) running FluidNC, on **desktop, tablet and phone**.
 
 It connects to your machine over the network and covers almost everything the built-in FluidNC web UI does, with two things it does better: it **respects the Maslow calibration state machine** so you can't push the machine into an invalid or stuck state, and it wraps calibration in a **plain-language guided wizard**.
 
@@ -15,22 +15,10 @@ It connects to your machine over the network and covers almost everything the bu
 
 ## Why another control panel?
 
-- **State-machine aware** — every action is gated against the firmware's allowed transitions (retract → extend → take slack → calibrate → ready to cut). No more "why is my machine stuck in an unknown state?" after a mis-step.
-- **Guided calibration wizard** — each step is explained in everyday language, advances automatically as the firmware reports progress, and offers a one-tap **daily resume** (just re-apply tension) plus **release tension** so the belts and frame can rest overnight.
-- **One responsive app** — a real desktop app (macOS / Windows / Linux) and a touch-first layout for a tablet or phone mounted next to the machine, with **manual control as the landing screen**.
-- **Almost the whole FluidNC web UI, re-implemented** — jogging, jobs, SD card, settings and a raw console — with UX improvements layered on top (the guided wizard being the headline).
-
-## Features
-
-- **Manual control** — XY/Z jog pad, selectable step sizes & feed, Home, Unlock, Hold / Resume / Reset, jog cancel
-- **Work zero** — define and go-to home for XY and Z separately
-- **Calibration wizard** — live state, automatic step tracking, daily resume, overnight tension release
-- **Maslow panel** — belt telemetry, retract / extend / comply / take slack / calibrate / park, Stop / E-Stop, diagnostics
-- **G-code jobs** — open a local file or run from the SD card, 2D toolpath preview (path / machine / trace boundary), streaming with progress and **resume of interrupted jobs**
-- **SD card browser** — preview, run, upload and delete files
-- **Machine & firmware settings** — work area, belt tension, material, calibration tuning and park position, edited and saved straight to the firmware
-- **Console** — send raw GRBL/FluidNC commands
-- Always-visible **machine state** and **STOP**
+- **State-machine aware.** Every action is gated against the firmware's allowed transitions (retract → extend → take slack → calibrate → ready to cut). No more wondering why the machine is stuck in an unknown state after a mis-step.
+- **Guided calibration wizard.** Each step is explained in everyday language, advances automatically as the firmware reports progress, and offers a one-tap daily resume (just re-apply tension) plus release tension so the belts and frame can rest overnight.
+- **One responsive app.** A real desktop build (macOS / Windows / Linux) and a touch-first layout for a tablet or phone mounted next to the machine, with manual control as the landing screen.
+- **Almost the whole FluidNC web UI, re-implemented.** Jogging, jobs, SD card, settings and a raw console, with UX improvements layered on top (the guided wizard being the headline).
 
 ## Screenshots
 
@@ -44,7 +32,7 @@ It connects to your machine over the network and covers almost everything the bu
 
 You'll need a Maslow running **FluidNC** reachable on your network (by `maslow.local` or its IP).
 
-> **Firmware compatibility:** built and tested against the Maslow build of **FluidNC v1.21 – v1.22+**. It degrades gracefully across versions — a few options (apply-tension limiting) require firmware **≥ v1.22** and are simply hidden or ignored on older builds.
+> **Firmware compatibility:** built and tested against the Maslow build of **FluidNC v1.21 to v1.22+**. It degrades gracefully across versions: a few options (apply-tension limiting) require firmware **≥ v1.22** and are simply hidden or ignored on older builds.
 
 ### Prerequisites
 
@@ -72,7 +60,7 @@ The packaged app lands in `src-tauri/target/release/`.
 
 ## Disclaimer
 
-This is a community project and is **not affiliated with Maslow CNC or FluidNC**. CNC machines can cause injury and damage — use at your own risk and keep the physical emergency stop within reach.
+This is a community project and is **not affiliated with Maslow CNC or FluidNC**. CNC machines can cause injury and damage, so use at your own risk and keep the physical emergency stop within reach.
 
 ## License
 
