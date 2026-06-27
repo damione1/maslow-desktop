@@ -3,9 +3,9 @@ name: Release
 # Builds installers on every version tag and attaches them to a GitHub Release.
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# Desktop (macOS / Windows / Linux) works with no secrets — it just ships
-# unsigned artifacts. Code signing + the mobile jobs are opt-in: set the repo
-# variable BUILD_MOBILE=true and add the secrets listed in the README/below.
+# Desktop (macOS / Windows) works with no secrets — it just ships unsigned
+# artifacts. Code signing + the Android job are opt-in: set the repo variable
+# BUILD_MOBILE=true and add the secrets listed below.
 
 on:
   push:
@@ -17,8 +17,8 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Desktop: macOS (Apple Silicon + Intel), Windows, Linux. Creates the draft
-  # release that the mobile jobs later upload into.
+  # Desktop: macOS (Apple Silicon + Intel) and Windows. Creates the draft
+  # release that the Android job later uploads into.
   # ---------------------------------------------------------------------------
   desktop:
     strategy:
@@ -29,8 +29,6 @@ jobs:
             args: "--target aarch64-apple-darwin"
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
-          - platform: ubuntu-22.04
-            args: ""
           - platform: windows-latest
             args: ""
     runs-on: ${{ matrix.platform }}
@@ -51,12 +49,6 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend dependencies
         run: npm ci
@@ -155,60 +147,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" "$RUNNER_TEMP/maslow-desktop-${{ github.ref_name }}.apk" --clobber
-
-  # ---------------------------------------------------------------------------
-  # iOS: builds a signed .ipa. NOTE: an .ipa on a GitHub release is only
-  # installable on devices registered in the provisioning profile (ad-hoc /
-  # release-testing). Real public distribution = TestFlight / App Store.
-  # Opt-in: needs BUILD_MOBILE=true + the APPLE_* / IOS_* secrets.
-  # ---------------------------------------------------------------------------
-  ios:
-    needs: desktop
-    if: ${{ vars.BUILD_MOBILE == 'true' }}
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup Rust (iOS targets)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Import signing certificate
-        uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
-          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-
-      - name: Install provisioning profile
-        run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Initialize iOS project
-        run: npm run tauri ios init
-
-      - name: Build IPA
-        run: npm run tauri ios build -- --export-method release-testing
-        env:
-          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
-
-      - name: Upload IPA to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          IPA=$(find src-tauri/gen/apple/build -name "*.ipa" | head -n 1)
-          gh release upload "${{ github.ref_name }}" "$IPA" --clobber
