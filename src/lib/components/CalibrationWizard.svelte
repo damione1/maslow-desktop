@@ -24,6 +24,8 @@
   interface Step {
     key: string;
     title: string;
+    /** Short button label when the full title would be redundant. */
+    btn?: string;
     hint: string;
     cmd: string | null;
     policy: PolicyKey | null;
@@ -58,7 +60,8 @@
     },
     {
       key: "extend",
-      title: "Extend belts to MAXIMUM",
+      title: "Extend belts to maximum",
+      btn: "Extend",
       hint: "Let all four belts pay all the way out and stop on their own — do NOT press Stop. Calibration can't start until every belt reaches maximum and the state reads “Belts Extended”.",
       cmd: "$EXT",
       policy: "extend",
@@ -260,6 +263,28 @@
     </div>
   {/if}
 
+  <!-- At Ready to Cut, let the operator relax the belts for the night so the
+       belts + frame don't sit under tension. $CMP runs the firmware's
+       release-tension transition; the morning resume is Retract → Extend →
+       Apply Tension (calibration stays valid). -->
+  {#if code === 7}
+    <div class="release">
+      <div class="release-head">Done for the day?</div>
+      <p class="release-hint">
+        Release the belt tension so the belts and frame rest overnight. In the
+        morning, run <strong>Retract → Extend → Apply Tension</strong> to resume —
+        the calibration stays valid.
+      </p>
+      <button
+        class="release-go"
+        onclick={() => run("$CMP")}
+        disabled={!(ap?.comply ?? false)}
+      >
+        Release tension
+      </button>
+    </div>
+  {/if}
+
   {#if resumeable}
     <button class="toggle" onclick={() => (showFull = !showFull)}>
       {fullVisible
@@ -299,7 +324,7 @@
             onclick={() => run(s.cmd)}
             disabled={!canDo(s)}
           >
-            {st === "busy" ? "Running…" : s.title}
+            {st === "busy" ? "Running…" : (s.btn ?? s.title)}
           </button>
         {/if}
       </li>
@@ -535,6 +560,42 @@
     font-size: 0.9em;
     font-weight: 600;
     padding: 0.55em 0.8em;
+  }
+  .release {
+    background: #241a08;
+    border: 1px solid #6b4a1f;
+    border-radius: 9px;
+    padding: 0.6em 0.7em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45em;
+  }
+  .release-head {
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.7;
+  }
+  .release-hint {
+    margin: 0;
+    font-size: 0.8em;
+    opacity: 0.8;
+    line-height: 1.35;
+  }
+  .release-hint strong {
+    color: #ffd166;
+  }
+  .release-go {
+    background: #b8860b;
+    border-color: #b8860b;
+    font-size: 0.9em;
+    font-weight: 600;
+    padding: 0.55em 0.8em;
+    align-self: flex-start;
+  }
+  .release-go:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   .toggle {
     background: transparent;
