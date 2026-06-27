@@ -71,6 +71,7 @@ impl AnchorParams {
             br_x: self.br_x as f32,
             br_y: 0.0,
             valid: false,
+            calibrated: false,
         }
     }
 }
@@ -383,7 +384,9 @@ fn sum_squared(res: &[f64]) -> f64 {
 }
 
 /// Jacobians (anchors jia[4][5], sled jis[4][2]) and residuals ri[4] for one
-/// measurement, mirroring measurementJacobiansAndResiduals().
+/// measurement, mirroring measurementJacobiansAndResiduals(). The wide signature
+/// is a faithful port of the firmware function — kept verbatim for auditability.
+#[allow(clippy::too_many_arguments)]
 fn jacobians(
     m: &Measurement,
     tl_x: f64,
@@ -451,7 +454,9 @@ fn invert_damped_2x2(v00: f64, v01: f64, v11: f64, lambda: f64) -> Option<[[f64;
 }
 
 /// Gaussian elimination with partial pivoting on a 5x5 system, mirroring
-/// solve5x5(). Returns None if singular.
+/// solve5x5(). Returns None if singular. Index-based loops are kept (the inner
+/// elimination indexes two rows at once) to match the firmware verbatim.
+#[allow(clippy::needless_range_loop)]
 fn solve_5x5(mut a: [[f64; 5]; 5], rhs: [f64; 5]) -> Option<[f64; 5]> {
     let mut b = rhs;
     for col in 0..5 {

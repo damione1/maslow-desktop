@@ -3,7 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { connection } from "$lib/stores/connection";
-  import { wsState } from "$lib/stores/machine";
+  import { wsState, machineStatus } from "$lib/stores/machine";
+  import { actionPolicy } from "$lib/stores/maslow";
   import { jobProgress, loadSavedJob, loadToolpath, type SavedJob } from "$lib/stores/job";
   import Modal from "./Modal.svelte";
   import FileBrowser from "./FileBrowser.svelte";
@@ -27,6 +28,15 @@
   );
   const percent = $derived(
     job && job.total > 0 ? Math.round((job.acked / job.total) * 100) : 0,
+  );
+  // Streaming is allowed only when the machine is Idle AND in READY_TO_CUT — the
+  // single state where the firmware powers the XY belt PID. Reconciled in Rust.
+  const canRun = $derived(connected && ($actionPolicy?.run ?? false));
+  // After a reconnect the firmware may come back in Alarm (it rebooted); never
+  // resume an interrupted stream into Alarm — the operator must home/unlock first.
+  const alarm = $derived($machineStatus?.state === "Alarm");
+  const canResumeInterrupted = $derived(
+    connected && !(job?.state === "interrupted" && alarm),
   );
 
   onMount(async () => {
@@ -59,7 +69,13 @@
   }
 
   async function start() {
-    if (!filePath) return;
+    if (!filePath || !canRun) return;
+    if (
+      !window.confirm(
+        `Start cutting ${fileName}? The router will move — make sure the bit, material and work zero are set.`,
+      )
+    )
+      return;
     busy = true;
     try {
       const total = await invoke<number>("stream_start", {
@@ -75,7 +91,13 @@
   }
 
   async function resumeSaved() {
-    if (!saved) return;
+    if (!saved || !canRun) return;
+    if (
+      !window.confirm(
+        `Resume ${saved.name} at line ${saved.acked}/${saved.total}? The router will move from the current position.`,
+      )
+    )
+      return;
     busy = true;
     try {
       await invoke<number>("stream_start", {
@@ -128,7 +150,7 @@
         at line {saved.acked}/{saved.total}
       </span>
       <div class="row">
-        <button onclick={resumeSaved} disabled={!connected || busy}>Resume</button>
+        <button onclick={resumeSaved} disabled={!canRun || busy}>Resume</button>
         <button class="ghost" onclick={() => (saved = null)}>Dismiss</button>
       </div>
     </div>
@@ -171,15 +193,28 @@
       {#if job?.state === "running"}
         <button onclick={pause} disabled={!connected}>Pause</button>
       {:else}
-        <button onclick={resume} disabled={!connected}>Resume</button>
+        <button onclick={resume} disabled={!canResumeInterrupted}>Resume</button>
       {/if}
       <button class="danger" onclick={stop}>Stop</button>
     {:else}
-      <button onclick={start} disabled={!connected || !filePath || busy}>
+      <button onclick={start} disabled={!canRun || !filePath || busy}>
         Start
       </button>
     {/if}
   </div>
+
+  {#if !active && filePath && connected && !canRun}
+    <p class="gate-hint">
+      Machine must be <strong>Ready to Cut</strong> (calibrated and tensioned) and
+      idle before a job can start.
+    </p>
+  {/if}
+  {#if job?.state === "interrupted" && alarm}
+    <p class="gate-hint">
+      Machine is in <strong>Alarm</strong> after reconnecting — home or unlock it,
+      then resume.
+    </p>
+  {/if}
 </section>
 
 {#if showSd}
@@ -292,6 +327,15 @@
   .controls {
     display: flex;
     gap: 0.5em;
+  }
+  .gate-hint {
+    margin: 0;
+    font-size: 0.78em;
+    line-height: 1.35;
+    color: #e0a83d;
+  }
+  .gate-hint strong {
+    color: #ffd166;
   }
   button {
     padding: 0.4em 1em;

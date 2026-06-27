@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { wsState } from "$lib/stores/machine";
+  import { wsState, machineStatus } from "$lib/stores/machine";
   import { jobProgress } from "$lib/stores/job";
   import { connection } from "$lib/stores/connection";
   import { actionPolicy, maslowConfig, refreshConfig } from "$lib/stores/maslow";
@@ -47,6 +47,14 @@
   const resume = () => realtime(0x7e);
   const reset = () => realtime(0x18);
   const jogCancel = () => realtime(0x85);
+
+  // Feed-rate override (realtime, applies live — useful mid-cut). 0x90 = reset to
+  // 100%, 0x91 = +10%, 0x92 = -10%. The live percent comes from the status
+  // report's `Ov:` field (feed is the first value).
+  const feedOverride = $derived($machineStatus?.ov?.[0] ?? 100);
+  const feedReset = () => realtime(0x90);
+  const feedUp = () => realtime(0x91);
+  const feedDown = () => realtime(0x92);
 
   const home = () => line("$H");
   const unlock = () => line("$X");
@@ -292,7 +300,22 @@
   <div class="row realtime">
     <button class="hold" onclick={hold} disabled={!connected}>Hold !</button>
     <button class="resume" onclick={resume} disabled={!connected}>Resume ~</button>
-    <button class="danger" onclick={reset} disabled={!connected}>Reset ⌃X</button>
+    <button
+      class="danger"
+      onclick={reset}
+      disabled={!connected}
+      title="Soft reset (Ctrl-X / 0x18) — halts all motion. Same action as the top-bar E-STOP."
+      >Reset ⌃X</button
+    >
+  </div>
+
+  <!-- Feed-rate override: realtime, so it applies even mid-cut to slow or speed
+       a running job without stopping it. -->
+  <div class="row feedov">
+    <span class="lbl" title="Feed-rate override (live)">Feed {feedOverride}%</span>
+    <button onclick={feedDown} disabled={!connected} title="Feed −10% (0x92)">−</button>
+    <button onclick={feedReset} disabled={!connected} title="Reset feed to 100% (0x90)">100%</button>
+    <button onclick={feedUp} disabled={!connected} title="Feed +10% (0x91)">+</button>
   </div>
 </section>
 
@@ -476,6 +499,16 @@
   .ghost {
     background: transparent;
     border-color: #555;
+  }
+  .feedov .lbl {
+    flex: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .feedov button {
+    padding: 0.3em 0.6em;
+    min-width: 2.4em;
+    background: #2b2b2b;
+    border: 1px solid #444;
   }
   .realtime .hold {
     background: #b8860b;

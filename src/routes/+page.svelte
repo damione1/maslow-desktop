@@ -96,7 +96,7 @@
         class="estop"
         onclick={estop}
         disabled={!connected}
-        title="Emergency stop — realtime soft reset (Ctrl-X / 0x18)"
+        title="Emergency stop — halts all motion immediately (realtime soft reset, Ctrl-X / 0x18). Recoverable: unlock or home afterward. Same as the rail's Reset."
       >
         ⛔ E-STOP
       </button>

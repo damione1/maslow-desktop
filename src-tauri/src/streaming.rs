@@ -61,6 +61,14 @@ pub struct Job {
     inflight: VecDeque<usize>,
     inflight_bytes: usize,
     last_persist_acked: usize,
+    /// A modal-state preamble to replay before the next streamed line, set when
+    /// resuming mid-file (the leading G20/G21/G90/G54/F block sits below `acked`
+    /// and the firmware may have lost its modal state across the interruption).
+    /// Sent once, ahead of the file lines; its ack is swallowed so it does not
+    /// advance `acked`.
+    preamble: Option<String>,
+    /// Whether the preamble line is currently sent-but-unacked.
+    preamble_inflight: bool,
 }
 
 impl Job {
@@ -68,6 +76,13 @@ impl Job {
         let total = lines.len();
         let start = start_index.min(total);
         let name = file_name(&path);
+        // Resuming mid-file: replay the modal state that was active at the resume
+        // point so a reboot/units/WCS loss can't scale or offset the cut.
+        let preamble = if start > 0 {
+            modal_preamble(&lines[..start])
+        } else {
+            None
+        };
         Job {
             path,
             name,
@@ -81,6 +96,8 @@ impl Job {
             inflight: VecDeque::new(),
             inflight_bytes: 0,
             last_persist_acked: start,
+            preamble,
+            preamble_inflight: false,
         }
     }
 
@@ -114,7 +131,27 @@ impl Job {
     /// Next line to send, if the firmware buffer has room for it.
     /// Returns the line *with* its trailing newline.
     pub fn next_line(&mut self) -> Option<String> {
-        if self.paused || self.done || self.sent >= self.total {
+        if self.paused || self.done {
+            return None;
+        }
+        // Replay the resume preamble first (once), before any file line. Its byte
+        // length counts against the RX budget like any other line; its ack is
+        // swallowed in `ack` so it never advances `acked`.
+        if !self.preamble_inflight {
+            if let Some(pre) = self.preamble.take() {
+                let len = pre.len() + 1;
+                if self.inflight_bytes + len > RX_BUFFER && !self.inflight.is_empty() {
+                    // No room yet — put it back and wait for buffer space.
+                    self.preamble = Some(pre);
+                    return None;
+                }
+                self.inflight.push_back(len);
+                self.inflight_bytes += len;
+                self.preamble_inflight = true;
+                return Some(format!("{pre}\n"));
+            }
+        }
+        if self.sent >= self.total {
             return None;
         }
         let len = self.lines[self.sent].len() + 1;
@@ -138,6 +175,12 @@ impl Job {
         }
         if let Some(len) = self.inflight.pop_front() {
             self.inflight_bytes -= len;
+            // The first inflight entry after a resume is the modal preamble, not
+            // a file line: free its bytes but do NOT advance `acked`.
+            if self.preamble_inflight {
+                self.preamble_inflight = false;
+                return false;
+            }
             self.acked += 1;
             if is_error {
                 self.errors += 1;
@@ -157,6 +200,13 @@ impl Job {
         self.inflight_bytes = 0;
         self.sent = self.acked;
         self.paused = true;
+        self.preamble_inflight = false;
+        // The connection broke (or a soft reset flushed the firmware): the
+        // machine may have lost its modal state. Re-arm a preamble so the next
+        // resume replays the units/distance/WCS/feed active at the resume point.
+        if self.acked > 0 {
+            self.preamble = modal_preamble(&self.lines[..self.acked]);
+        }
     }
 
     fn should_persist(&self) -> bool {
@@ -267,6 +317,85 @@ fn file_name(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
+/// Build a modal-state preamble from the lines preceding a resume point, so the
+/// resumed stream re-establishes the units / distance mode / plane / work
+/// coordinate system / feed that were in effect there. Only modal words that
+/// actually appeared in the skipped region are replayed (we never invent a
+/// default the file did not set). Returns None when there is nothing to replay.
+pub(crate) fn modal_preamble(lines: &[String]) -> Option<String> {
+    let mut units: Option<&str> = None; // G20 | G21
+    let mut distance: Option<&str> = None; // G90 | G91
+    let mut plane: Option<&str> = None; // G17 | G18 | G19
+    let mut wcs: Option<String> = None; // G54 .. G59
+    let mut feed: Option<String> = None; // F<n>
+
+    for line in lines {
+        for (letter, num) in modal_words(line) {
+            match letter {
+                'G' => match num.as_str() {
+                    "20" => units = Some("G20"),
+                    "21" => units = Some("G21"),
+                    "90" => distance = Some("G90"),
+                    "91" => distance = Some("G91"),
+                    "17" => plane = Some("G17"),
+                    "18" => plane = Some("G18"),
+                    "19" => plane = Some("G19"),
+                    "54" | "55" | "56" | "57" | "58" | "59" => wcs = Some(format!("G{num}")),
+                    _ => {}
+                },
+                'F' if !num.is_empty() => feed = Some(format!("F{num}")),
+                _ => {}
+            }
+        }
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(d) = distance {
+        parts.push(d.to_string());
+    }
+    if let Some(u) = units {
+        parts.push(u.to_string());
+    }
+    if let Some(p) = plane {
+        parts.push(p.to_string());
+    }
+    if let Some(w) = wcs {
+        parts.push(w);
+    }
+    if let Some(f) = feed {
+        parts.push(f);
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+/// Tokenise a G-code line into (letter, number) words, tolerating concatenated
+/// forms like `G21G90`. The number keeps digits, sign and decimal point.
+fn modal_words(line: &str) -> Vec<(char, String)> {
+    let chars: Vec<char> = line.to_ascii_uppercase().chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_alphabetic() {
+            let letter = chars[i];
+            i += 1;
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_ascii_digit() || matches!(chars[i], '.' | '-' | '+'))
+            {
+                i += 1;
+            }
+            out.push((letter, chars[start..i].iter().collect()));
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +441,58 @@ mod tests {
         let job = Job::new("/x.nc".into(), lines, 3);
         assert_eq!(job.sent, 3);
         assert_eq!(job.acked, 3);
+    }
+
+    #[test]
+    fn modal_preamble_replays_active_modals() {
+        let lines: Vec<String> = vec![
+            "G21".into(),
+            "G90".into(),
+            "G54".into(),
+            "F800".into(),
+            "G1 X10 Y10".into(),
+            "G20".into(), // a later units change, must win
+            "G1 X20".into(),
+        ];
+        // Resume after all 7 lines: the active units are now G20.
+        let pre = modal_preamble(&lines).unwrap();
+        assert!(pre.contains("G90"));
+        assert!(pre.contains("G20") && !pre.contains("G21"));
+        assert!(pre.contains("G54"));
+        assert!(pre.contains("F800"));
+    }
+
+    #[test]
+    fn modal_preamble_handles_concatenated_and_empty() {
+        assert_eq!(modal_preamble(&["G21G90".into()]).as_deref(), Some("G90 G21"));
+        // No modal words → nothing to replay.
+        assert!(modal_preamble(&["G1 X1 Y2".into(), "M3".into()]).is_none());
+    }
+
+    #[test]
+    fn resume_preamble_is_sent_first_and_not_counted() {
+        let lines: Vec<String> = vec![
+            "G21".into(),
+            "G90".into(),
+            "G1 X1".into(),
+            "G1 X2".into(),
+            "G1 X3".into(),
+        ];
+        let mut job = Job::new("/x.nc".into(), lines, 3);
+        // First line out is the preamble, not a file line.
+        let first = job.next_line().unwrap();
+        assert!(first.starts_with("G90 G21"));
+        assert_eq!(job.acked, 3, "preamble must not advance acked yet");
+        // Acking the preamble frees its bytes but keeps acked at the resume point.
+        assert!(!job.ack(false));
+        assert_eq!(job.acked, 3);
+        // Then the two remaining real lines stream and complete normally.
+        assert!(job.next_line().is_some());
+        assert!(job.next_line().is_some());
+        assert!(job.next_line().is_none());
+        assert!(!job.ack(false));
+        assert!(job.ack(false));
+        assert!(job.done);
+        assert_eq!(job.acked, 5);
     }
 }

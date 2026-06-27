@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
+  import { actionPolicy } from "$lib/stores/maslow";
   import { jobProgress, loadSdToolpath } from "$lib/stores/job";
 
   // Called after a successful preview so the parent (e.g. the SD modal) can
@@ -25,6 +26,9 @@
       $jobProgress.state !== "done" &&
       $jobProgress.state !== "error",
   );
+  // Same gate as the local streamer: a firmware-side SD run cuts material, so it
+  // is allowed only when the machine is idle and Ready to Cut (belts tensioned).
+  const canRun = $derived(connected && !jobActive && ($actionPolicy?.run ?? false));
 
   function isDir(e: SdEntry): boolean {
     return e.isdir === true || String(e.size) === "-1";
@@ -75,6 +79,8 @@
   }
 
   async function del(name: string) {
+    if (!window.confirm(`Delete ${name} from the SD card? This cannot be undone.`))
+      return;
     try {
       await invoke("delete_file", {
         host: $connection.host,
@@ -88,6 +94,13 @@
   }
 
   function run(name: string) {
+    if (!canRun) return;
+    if (
+      !window.confirm(
+        `Run ${name} from the SD card? The router will move — make sure the bit, material and work zero are set.`,
+      )
+    )
+      return;
     // Firmware-side run from SD (not the client streamer).
     invoke("send_line", { line: `$SD/Run=${fullPath(name)}` });
   }
@@ -136,7 +149,14 @@
         <span class="size">{humanSize(e)}</span>
         {#if !isDir(e)}
           <button class="sm" onclick={() => preview(e.name)}>Preview</button>
-          <button class="sm" onclick={() => run(e.name)} disabled={jobActive}>Run</button>
+          <button
+            class="sm"
+            onclick={() => run(e.name)}
+            disabled={!canRun}
+            title={canRun
+              ? "Run this file from the SD card"
+              : "Machine must be idle and Ready to Cut"}>Run</button
+          >
           <button class="sm danger" onclick={() => del(e.name)}>✕</button>
         {/if}
       </div>

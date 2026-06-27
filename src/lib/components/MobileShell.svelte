@@ -23,7 +23,7 @@
   let host = $state($connection.host);
 
   // 0x18 = Ctrl-X soft reset — the universal kill, always reachable from chrome.
-  function stop() {
+  function estop() {
     invoke("send_realtime", { byte: 0x18 });
   }
 
@@ -58,7 +58,13 @@
       {connected ? "Connected" : "Connect"}
     </button>
 
-    <button class="stop" onclick={stop} disabled={!connected}>STOP</button>
+    <button
+      class="stop"
+      onclick={estop}
+      disabled={!connected}
+      title="Emergency stop — halts all motion (soft reset, Ctrl-X / 0x18). Recoverable."
+      >⛔ E-STOP</button
+    >
   </header>
 
   <main class="content">

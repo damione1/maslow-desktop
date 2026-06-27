@@ -70,6 +70,7 @@ fn words(line: &str) -> Vec<(char, f64)> {
 
 /// Append the points of an arc from (x0,y0) to (x1,y1) about (cx,cy) to `pts`
 /// (excluding the start point). `cw` selects G2 (clockwise) vs G3.
+#[allow(clippy::too_many_arguments)]
 fn arc_points(x0: f64, y0: f64, x1: f64, y1: f64, cx: f64, cy: f64, cw: bool, pts: &mut Vec<(f64, f64)>) {
     let r = ((x0 - cx).powi(2) + (y0 - cy).powi(2)).sqrt();
     let a0 = (y0 - cy).atan2(x0 - cx);
@@ -129,7 +130,7 @@ pub fn parse_toolpath(lines: &[String]) -> Toolpath {
                 'G' => {
                     let g = v.round() as i32;
                     match g {
-                        0 | 1 | 2 | 3 => {
+                        0..=3 => {
                             mode = g;
                             seen_motion = true;
                             motion_this_line = Some(g);

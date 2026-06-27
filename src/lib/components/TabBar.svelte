@@ -1,6 +1,7 @@
 <script lang="ts">
   import { activeTab, type Tab } from "$lib/stores/ui";
   import { anchors, maslowState } from "$lib/stores/maslow";
+  import { isResumablePreCut } from "$lib/stores/calState";
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "job", label: "Job" },
@@ -12,9 +13,9 @@
   // and idle in EXTENDEDOUT(4)/RETRACTED(2), a daily-resume action lives under
   // Calibrate. A dot on the tab surfaces it without forcing it as the default.
   const resumeHint = $derived(
-    ($anchors?.valid ?? false) &&
+    ($anchors?.calibrated ?? false) &&
       !($maslowState?.busy ?? false) &&
-      ($maslowState?.code === 4 || $maslowState?.code === 2),
+      isResumablePreCut($maslowState?.code),
   );
 </script>
 

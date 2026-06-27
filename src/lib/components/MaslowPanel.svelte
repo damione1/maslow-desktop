@@ -8,12 +8,13 @@
     anchors,
     maslowConfig,
   } from "$lib/stores/maslow";
+  import { isReadyToCut } from "$lib/stores/calState";
 
   const connected = $derived($wsState === "connected");
   const policy = $derived($maslowState);
   const busy = $derived(policy?.busy ?? false);
   const info = $derived($maslowInfo);
-  const calibrated = $derived($anchors?.valid ?? false);
+  const calibrated = $derived($anchors?.calibrated ?? false);
 
   // Allowed actions come from the unified Rust action policy (reconciles the
   // FluidNC state + the Maslow calibration state + any running job).
@@ -32,7 +33,9 @@
   // Park is a motion move to a safe position; only meaningful once calibrated
   // and idle (READY_TO_CUT). `jog` is true only when FluidNC is Idle and no job
   // runs, so it also covers the job lock.
-  const canPark = $derived(connected && policy?.code === 7 && (ap?.jog ?? false));
+  const canPark = $derived(
+    connected && isReadyToCut(policy?.code) && (ap?.jog ?? false),
+  );
   // Diagnostic commands are anyState in the firmware; gate on a live link only.
   const canDiag = $derived(connected && (ap?.jog ?? false));
 
@@ -55,6 +58,18 @@
     invoke("send_line", { line: CMD[cmd] });
   }
 
+  // Calibrate drives the machine across the full measurement grid, so confirm
+  // before it starts moving.
+  function calibrate() {
+    if (
+      !window.confirm(
+        "Start calibration? The machine will drive to every measurement waypoint across the work area.",
+      )
+    )
+      return;
+    action("calibrate");
+  }
+
   // Park: lift Z to a safe height (work coords) then move to the park position
   // in machine coords. Mirrors the embedded UI's READY_TO_CUT park sequence,
   // using the configured park offsets (defaults if config not loaded).
@@ -63,9 +78,35 @@
     const z = c?.park_z ?? 2.0;
     const x = c?.park_x ?? 0.0;
     const y = c?.park_y ?? 0.0;
+    if (
+      !window.confirm(
+        `Park the machine? It will lift Z to ${z} then move to X${x} Y${y}.`,
+      )
+    )
+      return;
     await invoke("send_line", { line: `G90 G0 Z${z}` });
     await invoke("send_line", { line: `G53 G0 Y${y} X${x}` });
   }
+
+  // $ESTOP is a latching emergency stop: the firmware requires a power cycle
+  // afterwards. Confirm so it isn't fired by accident in place of the recoverable
+  // Stop or the chrome soft-reset E-STOP.
+  function estopMaslow() {
+    if (
+      !window.confirm(
+        "Trigger the latching emergency stop? The machine will not respond until you power it off and on again.",
+      )
+    )
+      return;
+    action("estop");
+  }
+
+  // Manual belt controls are collapsed by default (the wizard is the guided
+  // path); auto-open while the machine is settling so Retract recovery is handy.
+  let showManual = $state(false);
+  $effect(() => {
+    if (settling) showManual = true;
+  });
 
   let showDiag = $state(false);
   function diag(cmd: "test" | "setZStop" | "calReset", confirmMsg?: string) {
@@ -95,7 +136,7 @@
 <section class="maslow">
   <header>
     <span>Maslow</span>
-    <span class="state" class:busy class:ready={policy?.code === 7}>
+    <span class="state" class:busy class:ready={isReadyToCut(policy?.code)}>
       {policy?.label ?? "—"}
     </span>
     {#if info}
@@ -133,26 +174,52 @@
     </div>
   {/if}
 
+  <!-- The Calibration Wizard drives these belt actions in order; this disclosure
+       is the manual/recovery path for the same commands, so they aren't shown
+       twice as live buttons side by side. Auto-opens while the machine is
+       settling so the Retract recovery stays one tap away. -->
+  <details class="manual" bind:open={showManual}>
+    <summary>Manual belt control</summary>
+    <div class="actions">
+      <button
+        class:recover={settling && canRetract}
+        onclick={() => action("retract")}
+        disabled={!canRetract}
+        title="Pull all belts fully in ($ALL)">Retract</button
+      >
+      <button onclick={() => action("extend")} disabled={!canExtend} title="Pay all belts out ($EXT)">Extend</button>
+      <button
+        onclick={() => action("comply")}
+        disabled={!canComply}
+        title="Release belt tension ($CMP)">Release tension</button
+      >
+      <button onclick={() => action("takeSlack")} disabled={!canTakeSlack} title="Tension the belts ($TKSLK)">Take Slack</button>
+      <button class="go" onclick={calibrate} disabled={!canCalibrate} title="Run the measurement grid ($CAL)">
+        Calibrate
+      </button>
+    </div>
+  </details>
+
   <div class="actions">
-    <button
-      class:recover={settling && canRetract}
-      onclick={() => action("retract")}
-      disabled={!canRetract}>Retract</button
-    >
-    <button onclick={() => action("extend")} disabled={!canExtend}>Extend</button>
-    <button onclick={() => action("comply")} disabled={!canComply}>Comply</button>
-    <button onclick={() => action("takeSlack")} disabled={!canTakeSlack}>Take Slack</button>
-    <button class="go" onclick={() => action("calibrate")} disabled={!canCalibrate}>
-      Calibrate
-    </button>
     <button onclick={park} disabled={!canPark} title="Lift Z and move to the configured park position">
       Park
     </button>
   </div>
 
   <div class="actions stop-row">
-    <button class="warn" onclick={() => action("stop")} disabled={!can("stop")}>Stop</button>
-    <button class="danger" onclick={() => action("estop")} disabled={!can("estop")}>E-Stop</button>
+    <button
+      class="warn"
+      onclick={() => action("stop")}
+      disabled={!can("stop")}
+      title="Stop motors and cancel any calibration — recoverable ($STOP)">Stop</button
+    >
+    <button
+      class="danger"
+      onclick={() => estopMaslow()}
+      disabled={!can("estop")}
+      title="Latching emergency stop — the machine will not respond until powered off and on again ($ESTOP)"
+      >E-Stop ⚠</button
+    >
   </div>
 
   <details class="diag" bind:open={showDiag}>
@@ -325,6 +392,20 @@
   .stop-row button.danger {
     background: #8b2e2e;
     border-color: #8b2e2e;
+  }
+  .manual {
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 0.4em 0.6em;
+  }
+  .manual summary {
+    cursor: pointer;
+    color: #9a9a9a;
+    font-size: 0.85em;
+    user-select: none;
+  }
+  .manual .actions {
+    margin-top: 0.5em;
   }
   .diag {
     margin-top: 0.5em;

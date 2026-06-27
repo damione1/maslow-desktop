@@ -49,17 +49,73 @@ pub fn parse_state(line: &str) -> Option<i32> {
     digits.parse().ok()
 }
 
-// Calibration state codes (MaslowEnums.h).
-const UNKNOWN: i32 = 0;
-const RETRACTING: i32 = 1;
-const RETRACTED: i32 = 2;
-const EXTENDING: i32 = 3;
-const EXTENDEDOUT: i32 = 4;
-const TAKING_SLACK: i32 = 5;
-const CALIBRATION_IN_PROGRESS: i32 = 6;
-const READY_TO_CUT: i32 = 7;
-const RELEASE_TENSION: i32 = 8;
-const CALIBRATION_COMPUTING: i32 = 9;
+/// Maslow calibration state (mirrors the firmware `MaslowEnums.h`). The firmware
+/// owns this and reports it as an integer over the wire; we keep a typed enum
+/// internally so every match is exhaustive. Unrecognised codes map to `Unknown`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub enum CalState {
+    Unknown = 0,
+    Retracting = 1,
+    Retracted = 2,
+    Extending = 3,
+    ExtendedOut = 4,
+    TakingSlack = 5,
+    CalibrationInProgress = 6,
+    ReadyToCut = 7,
+    ReleaseTension = 8,
+    CalibrationComputing = 9,
+}
+
+impl CalState {
+    /// Map a firmware-reported integer to a state; anything unexpected → Unknown.
+    pub fn from_code(code: i32) -> Self {
+        use CalState::*;
+        match code {
+            1 => Retracting,
+            2 => Retracted,
+            3 => Extending,
+            4 => ExtendedOut,
+            5 => TakingSlack,
+            6 => CalibrationInProgress,
+            7 => ReadyToCut,
+            8 => ReleaseTension,
+            9 => CalibrationComputing,
+            _ => Unknown,
+        }
+    }
+
+    /// The numeric code, as the frontend and firmware use it.
+    pub fn code(self) -> i32 {
+        self as i32
+    }
+
+    pub fn label(self) -> &'static str {
+        use CalState::*;
+        match self {
+            Unknown => "Unknown",
+            Retracting => "Retracting",
+            Retracted => "Retracted",
+            Extending => "Extending",
+            ExtendedOut => "Extended",
+            TakingSlack => "Taking Slack",
+            CalibrationInProgress => "Calibrating",
+            ReadyToCut => "Ready to Cut",
+            ReleaseTension => "Releasing Tension",
+            CalibrationComputing => "Computing",
+        }
+    }
+
+    /// True while the machine is actively performing a transitional operation;
+    /// only Retract / Stop / E-Stop are offered then.
+    pub fn is_busy(self) -> bool {
+        use CalState::*;
+        matches!(
+            self,
+            Retracting | Extending | TakingSlack | CalibrationInProgress | ReleaseTension | CalibrationComputing
+        )
+    }
+}
 
 /// The action policy the UI applies for a given calibration state: which user
 /// actions are offered and whether the machine is mid-operation.
@@ -71,24 +127,10 @@ pub struct StatePolicy {
     /// state). Only Stop / E-Stop are offered then.
     pub busy: bool,
     /// Allowed user action ids: retract, extend, takeSlack, calibrate, comply,
-    /// stop, estop.
+    /// stop, estop. Used only inside Rust (the frontend gates on the reconciled
+    /// `ActionPolicy` booleans), so it is kept off the wire.
+    #[serde(skip)]
     pub allowed: Vec<String>,
-}
-
-pub fn label_for(code: i32) -> &'static str {
-    match code {
-        UNKNOWN => "Unknown",
-        RETRACTING => "Retracting",
-        RETRACTED => "Retracted",
-        EXTENDING => "Extending",
-        EXTENDEDOUT => "Extended",
-        TAKING_SLACK => "Taking Slack",
-        CALIBRATION_IN_PROGRESS => "Calibrating",
-        READY_TO_CUT => "Ready to Cut",
-        RELEASE_TENSION => "Releasing Tension",
-        CALIBRATION_COMPUTING => "Computing",
-        _ => "Unknown",
-    }
 }
 
 /// Single source of truth for per-state allowed actions, derived from
@@ -105,38 +147,36 @@ pub fn label_for(code: i32) -> &'static str {
 ///
 /// The remaining actions (extend / takeSlack / calibrate / comply) genuinely
 /// require a specific stable source state, so they stay gated behind `!busy`.
-pub fn policy_for(code: i32) -> StatePolicy {
-    let busy = matches!(
-        code,
-        RETRACTING | EXTENDING | TAKING_SLACK | CALIBRATION_IN_PROGRESS | RELEASE_TENSION | CALIBRATION_COMPUTING
-    );
+pub fn policy_for(state: CalState) -> StatePolicy {
+    use CalState::*;
+    let busy = state.is_busy();
 
     // Always available, even in busy/transitional states — see doc comment.
     // Retract is the universal escape hatch from a frozen FSM.
     let mut allowed: Vec<String> = vec!["retract".into(), "stop".into(), "estop".into()];
 
     if !busy {
-        match code {
-            RETRACTED => allowed.push("extend".into()),
-            EXTENDEDOUT => {
+        match state {
+            Retracted => allowed.push("extend".into()),
+            ExtendedOut => {
                 allowed.push("extend".into());
                 allowed.push("takeSlack".into());
                 allowed.push("calibrate".into());
                 allowed.push("comply".into());
             }
-            READY_TO_CUT => {
+            ReadyToCut => {
                 allowed.push("takeSlack".into());
                 allowed.push("calibrate".into());
                 allowed.push("comply".into());
             }
-            UNKNOWN => allowed.push("comply".into()),
+            Unknown => allowed.push("comply".into()),
             _ => {}
         }
     }
 
     StatePolicy {
-        code,
-        label: label_for(code).to_string(),
+        code: state.code(),
+        label: state.label().to_string(),
         busy,
         allowed,
     }
@@ -152,25 +192,25 @@ pub fn policy_for(code: i32) -> StatePolicy {
 
 /// True if `from -> to` is a transition the firmware can actually perform.
 /// `from == to` is always valid (an idempotent re-report).
-pub fn valid_transition(from: i32, to: i32) -> bool {
+pub fn valid_transition(from: CalState, to: CalState) -> bool {
+    use CalState::*;
     if from == to {
         return true;
     }
     match to {
         // Accepted from any state by requestStateChange.
-        UNKNOWN | RETRACTING => true,
-        RETRACTED => from == RETRACTING,
-        EXTENDING => matches!(from, RETRACTED | EXTENDEDOUT),
-        EXTENDEDOUT => matches!(
+        Unknown | Retracting => true,
+        Retracted => from == Retracting,
+        Extending => matches!(from, Retracted | ExtendedOut),
+        ExtendedOut => matches!(
             from,
-            EXTENDING | TAKING_SLACK | RELEASE_TENSION | CALIBRATION_COMPUTING | CALIBRATION_IN_PROGRESS
+            Extending | TakingSlack | ReleaseTension | CalibrationComputing | CalibrationInProgress
         ),
-        TAKING_SLACK => matches!(from, EXTENDEDOUT | READY_TO_CUT),
-        CALIBRATION_IN_PROGRESS => matches!(from, EXTENDEDOUT | READY_TO_CUT | CALIBRATION_COMPUTING),
-        CALIBRATION_COMPUTING => from == CALIBRATION_IN_PROGRESS,
-        READY_TO_CUT => matches!(from, CALIBRATION_IN_PROGRESS | CALIBRATION_COMPUTING | TAKING_SLACK),
-        RELEASE_TENSION => matches!(from, READY_TO_CUT | UNKNOWN | EXTENDEDOUT | CALIBRATION_COMPUTING),
-        _ => false,
+        TakingSlack => matches!(from, ExtendedOut | ReadyToCut),
+        CalibrationInProgress => matches!(from, ExtendedOut | ReadyToCut | CalibrationComputing),
+        CalibrationComputing => from == CalibrationInProgress,
+        ReadyToCut => matches!(from, CalibrationInProgress | CalibrationComputing | TakingSlack),
+        ReleaseTension => matches!(from, ReadyToCut | Unknown | ExtendedOut | CalibrationComputing),
     }
 }
 
@@ -178,24 +218,24 @@ pub fn valid_transition(from: i32, to: i32) -> bool {
 #[derive(Debug, PartialEq)]
 pub enum Observation {
     /// First state we have ever seen.
-    First(i32),
+    First(CalState),
     /// Same as the current state; nothing to do.
     Unchanged,
     /// A legitimate transition; state updated.
-    Valid(i32),
+    Valid(CalState),
     /// Invalid transition arriving within the debounce window — treated as a
     /// late straggler and ignored (state NOT updated).
-    Straggler { from: i32, to: i32 },
+    Straggler { from: CalState, to: CalState },
     /// Invalid transition outside the debounce window — the machine's report
     /// prevails, so state IS updated, but the discordance is logged.
-    Discord { from: i32, to: i32 },
+    Discord { from: CalState, to: CalState },
 }
 
 /// Tracks the authoritative Maslow calibration state. The machine's report
 /// always wins, but reports that contradict the transition graph and land just
 /// after a change are suppressed as stragglers to avoid UI flicker.
 pub struct StateTracker {
-    current: Option<i32>,
+    current: Option<CalState>,
     last_change: Instant,
 }
 
@@ -209,11 +249,11 @@ impl Default for StateTracker {
 }
 
 impl StateTracker {
-    pub fn current(&self) -> Option<i32> {
+    pub fn current(&self) -> Option<CalState> {
         self.current
     }
 
-    pub fn observe(&mut self, to: i32, debounce_ms: u64) -> Observation {
+    pub fn observe(&mut self, to: CalState, debounce_ms: u64) -> Observation {
         match self.current {
             None => {
                 self.current = Some(to);
@@ -271,7 +311,7 @@ pub struct ActionPolicy {
 
 /// Compute the allowed actions from the FluidNC state string, the Maslow
 /// calibration state, and whether a G-code job is streaming.
-pub fn action_policy(fluidnc: &str, maslow: Option<i32>, job_active: bool) -> ActionPolicy {
+pub fn action_policy(fluidnc: &str, maslow: Option<CalState>, job_active: bool) -> ActionPolicy {
     let idle = fluidnc == "Idle";
     let alarm = fluidnc == "Alarm";
     let jogging = fluidnc == "Jog";
@@ -290,7 +330,13 @@ pub fn action_policy(fluidnc: &str, maslow: Option<i32>, job_active: bool) -> Ac
         p.jog = idle || jogging; // $J= — notIdleOrJog
         p.home = idle || alarm; // $H — notIdleOrAlarm
         p.zero = idle; // G10 line
-        p.run = idle; // start streaming
+        // Start streaming ONLY when the belts are tensioned and the machine is
+        // idle. The firmware powers the XY belt PID exclusively in READY_TO_CUT
+        // (Maslow.cpp); streaming a job in any other state (EXTENDEDOUT, UNKNOWN,
+        // mid-calibration) drives the spindle and Z while the XY belts hang slack
+        // — an uncontrolled cut. This also blocks a blind resume after a reboot,
+        // when the machine comes back in Alarm / a non-cut state.
+        p.run = idle && maslow == Some(CalState::ReadyToCut);
         // $X is a *line* command, so it must be blocked while a job streams
         // (it would corrupt char-counting); the firmware accepts it anyState.
         p.unlock = true;
@@ -340,8 +386,14 @@ pub struct Anchors {
     pub br_y: f32,
     /// True when the geometry is non-degenerate and passes the firmware's own
     /// basic sanity checks (MaslowKinematics::checkBoundaries), i.e. the
-    /// machine has usable anchors and does NOT need recalibration to cut.
+    /// anchors are usable as a frame definition.
     pub valid: bool,
+    /// True when the anchors are valid AND differ from the firmware's compiled
+    /// defaults — i.e. a calibration actually ran and overwrote them. A factory
+    /// machine reports the defaults, which pass `valid`, so `valid` alone is not
+    /// proof of calibration; gate the "Calibrated ✓" badge and the
+    /// calibration-skipping resume shortcut on this instead.
+    pub calibrated: bool,
 }
 
 /// Parse a firmware config dump (the echo of `$/kinematics/MaslowKinematics/`)
@@ -380,7 +432,32 @@ pub fn parse_anchors(dump: &str) -> Option<Anchors> {
         return None;
     }
     a.valid = anchors_valid(&a);
+    a.calibrated = a.valid && !anchors_are_default(&a);
     Some(a)
+}
+
+// Firmware's compiled default anchor coordinates (MaslowKinematics.h). A machine
+// that has never been calibrated reports exactly these; they pass `anchors_valid`,
+// so we must detect them explicitly to avoid a false "Calibrated ✓".
+const DEFAULT_TL_X: f32 = -27.6;
+const DEFAULT_TL_Y: f32 = 2064.9;
+const DEFAULT_TR_X: f32 = 2924.3;
+const DEFAULT_TR_Y: f32 = 2066.5;
+const DEFAULT_BR_X: f32 = 2953.2;
+
+/// True when every reduced anchor coordinate matches the firmware default within
+/// a tight tolerance — meaning the geometry was never overwritten by a
+/// calibration. This is a safe-direction heuristic: a real calibration produces
+/// measured floats that never coincide with all of these exact literals at once,
+/// so the worst case is asking an already-calibrated user to recalibrate, never
+/// the reverse (claiming calibrated when it is not).
+fn anchors_are_default(a: &Anchors) -> bool {
+    const EPS: f32 = 0.05;
+    (a.tl_x - DEFAULT_TL_X).abs() < EPS
+        && (a.tl_y - DEFAULT_TL_Y).abs() < EPS
+        && (a.tr_x - DEFAULT_TR_X).abs() < EPS
+        && (a.tr_y - DEFAULT_TR_Y).abs() < EPS
+        && (a.br_x - DEFAULT_BR_X).abs() < EPS
 }
 
 /// Whether the anchor geometry is usable for cutting. Mirrors the firmware's
@@ -557,7 +634,7 @@ pub fn parse_maslow_config(dump: &str) -> Option<MaslowConfig> {
         bl_y: c.bl_y,
         br_x: c.br_x,
         br_y: c.br_y,
-        valid: false,
+        ..Default::default()
     });
     Some(c)
 }
@@ -621,7 +698,7 @@ mod tests {
 
     #[test]
     fn policy_extended_allows_calibrate() {
-        let p = policy_for(4); // EXTENDEDOUT
+        let p = policy_for(CalState::ExtendedOut);
         assert!(!p.busy);
         assert_eq!(p.label, "Extended");
         for a in ["retract", "extend", "takeSlack", "calibrate", "comply", "stop", "estop"] {
@@ -633,7 +710,7 @@ mod tests {
     fn policy_busy_allows_recovery_only() {
         // In a busy/transitional state the only user actions are the recovery
         // ones: Retract (the firmware's universal escape) + Stop/E-Stop.
-        let p = policy_for(6); // CALIBRATION_IN_PROGRESS
+        let p = policy_for(CalState::CalibrationInProgress);
         assert!(p.busy);
         assert_eq!(p.allowed, vec!["retract", "stop", "estop"]);
         for a in ["extend", "takeSlack", "calibrate", "comply"] {
@@ -645,7 +722,7 @@ mod tests {
     fn policy_retract_allowed_while_extending() {
         // The stop-from-EXTENDING bug: $STOP freezes the FSM at EXTENDING(3).
         // Retract must remain offered so the user can recover.
-        let p = policy_for(3); // EXTENDING
+        let p = policy_for(CalState::Extending);
         assert!(p.busy);
         assert!(p.allowed.contains(&"retract".to_string()));
         assert!(p.allowed.contains(&"stop".to_string()));
@@ -655,7 +732,7 @@ mod tests {
 
     #[test]
     fn policy_ready_to_cut_no_extend() {
-        let p = policy_for(7);
+        let p = policy_for(CalState::ReadyToCut);
         assert!(p.allowed.contains(&"calibrate".to_string()));
         assert!(!p.allowed.contains(&"extend".to_string()));
     }
@@ -670,37 +747,46 @@ mod tests {
 
     #[test]
     fn transitions_match_firmware() {
+        use CalState::*;
         // Valid per requestStateChange.
-        assert!(valid_transition(2, 3)); // RETRACTED -> EXTENDING
-        assert!(valid_transition(4, 6)); // EXTENDED -> CALIBRATION_IN_PROGRESS
-        assert!(valid_transition(6, 9)); // IN_PROGRESS -> COMPUTING
-        assert!(valid_transition(9, 7)); // COMPUTING -> READY_TO_CUT
-        assert!(valid_transition(7, 1)); // retract from anywhere
-        assert!(valid_transition(5, 5)); // idempotent
+        assert!(valid_transition(Retracted, Extending));
+        assert!(valid_transition(ExtendedOut, CalibrationInProgress));
+        assert!(valid_transition(CalibrationInProgress, CalibrationComputing));
+        assert!(valid_transition(CalibrationComputing, ReadyToCut));
+        assert!(valid_transition(ReadyToCut, Retracting)); // retract from anywhere
+        assert!(valid_transition(TakingSlack, TakingSlack)); // idempotent
         // Invalid.
-        assert!(!valid_transition(2, 4)); // RETRACTED -> EXTENDED (skips EXTENDING)
-        assert!(!valid_transition(0, 7)); // UNKNOWN -> READY_TO_CUT
+        assert!(!valid_transition(Retracted, ExtendedOut)); // skips EXTENDING
+        assert!(!valid_transition(Unknown, ReadyToCut));
     }
 
     #[test]
     fn tracker_first_and_valid() {
+        use CalState::*;
         let mut t = StateTracker::default();
-        assert_eq!(t.observe(2, 0), Observation::First(2));
-        assert_eq!(t.observe(2, 0), Observation::Unchanged);
-        assert_eq!(t.observe(3, 0), Observation::Valid(3));
-        assert_eq!(t.current(), Some(3));
+        assert_eq!(t.observe(Retracted, 0), Observation::First(Retracted));
+        assert_eq!(t.observe(Retracted, 0), Observation::Unchanged);
+        assert_eq!(t.observe(Extending, 0), Observation::Valid(Extending));
+        assert_eq!(t.current(), Some(Extending));
     }
 
     #[test]
     fn tracker_straggler_then_discord() {
+        use CalState::*;
         let mut t = StateTracker::default();
-        t.observe(2, 0); // current = 2
-        // Invalid 2->4 within a long debounce: suppressed straggler, state stays.
-        assert_eq!(t.observe(4, 10_000), Observation::Straggler { from: 2, to: 4 });
-        assert_eq!(t.current(), Some(2));
+        t.observe(Retracted, 0); // current = Retracted
+        // Invalid Retracted->ExtendedOut within a long debounce: suppressed.
+        assert_eq!(
+            t.observe(ExtendedOut, 10_000),
+            Observation::Straggler { from: Retracted, to: ExtendedOut }
+        );
+        assert_eq!(t.current(), Some(Retracted));
         // Same invalid jump with no debounce: machine prevails, logged discord.
-        assert_eq!(t.observe(4, 0), Observation::Discord { from: 2, to: 4 });
-        assert_eq!(t.current(), Some(4));
+        assert_eq!(
+            t.observe(ExtendedOut, 0),
+            Observation::Discord { from: Retracted, to: ExtendedOut }
+        );
+        assert_eq!(t.current(), Some(ExtendedOut));
     }
 
     #[test]
@@ -719,6 +805,32 @@ mod tests {
         assert_eq!(a.tr_y, 2066.5);
         assert_eq!(a.br_x, 2953.2);
         assert!(a.valid, "real frame geometry should be valid");
+        // These ARE the firmware defaults, so geometry is valid but the machine
+        // has not actually been calibrated.
+        assert!(
+            !a.calibrated,
+            "default anchors must not read as calibrated"
+        );
+    }
+
+    #[test]
+    fn calibrated_anchors_differ_from_defaults() {
+        // Values a real calibration would write — close to, but not exactly, the
+        // defaults. Valid geometry AND not the default literals → calibrated.
+        let dump = "tlX=-30.1 tlY=2061.2 trX=2921.8 trY=2069.7 \
+                    blX=0 blY=0 brX=2950.5 brY=0";
+        let a = parse_anchors(dump).unwrap();
+        assert!(a.valid);
+        assert!(a.calibrated, "measured anchors should read as calibrated");
+    }
+
+    #[test]
+    fn default_anchors_are_detected() {
+        let dump = "tlX=-27.600 tlY=2064.900 trX=2924.300 trY=2066.500 \
+                    blX=0 blY=0 brX=2953.200 brY=0";
+        let a = parse_anchors(dump).unwrap();
+        assert!(a.valid);
+        assert!(!a.calibrated, "exact firmware defaults are not a calibration");
     }
 
     #[test]
@@ -749,7 +861,7 @@ mod tests {
             bl_y: 0.0,
             br_x: 3000.0,
             br_y: 0.0,
-            valid: false,
+            ..Default::default()
         };
         assert!(anchors_valid(&a));
         a.tl_x = 3500.0; // left now to the right of right anchor
@@ -851,16 +963,34 @@ mod tests {
 
     #[test]
     fn action_policy_idle_extended() {
-        let p = action_policy("Idle", Some(4), false);
-        assert!(p.jog && p.home && p.run);
+        let p = action_policy("Idle", Some(CalState::ExtendedOut), false);
+        assert!(p.jog && p.home);
+        // Extended, but NOT tensioned: cutting is unsafe (XY belts unpowered).
+        assert!(!p.run, "run must be gated until READY_TO_CUT");
         assert!(p.retract && p.extend && p.calibrate && p.comply);
         assert!(p.hold && p.resume && p.reset);
     }
 
     #[test]
+    fn action_policy_run_only_when_ready_to_cut() {
+        // The firmware powers the XY belt PID only in READY_TO_CUT(7); a job may
+        // start only there, and only while FluidNC is Idle.
+        assert!(action_policy("Idle", Some(CalState::ReadyToCut), false).run);
+        // Right calibration state but the machine is moving / alarmed.
+        assert!(!action_policy("Run", Some(CalState::ReadyToCut), false).run);
+        assert!(!action_policy("Alarm", Some(CalState::ReadyToCut), false).run);
+        // Idle but not tensioned, or state unknown (e.g. just connected).
+        for ms in [0, 2, 3, 4, 5, 6, 9] {
+            let p = action_policy("Idle", Some(CalState::from_code(ms)), false);
+            assert!(!p.run, "run in state {ms}");
+        }
+        assert!(!action_policy("Idle", None, false).run, "run with unknown state");
+    }
+
+    #[test]
     fn action_policy_homing_locks_motion() {
         // Belt op running: FluidNC reports Home, calibration busy.
-        let p = action_policy("Home", Some(6), false);
+        let p = action_policy("Home", Some(CalState::CalibrationInProgress), false);
         assert!(!p.jog && !p.home && !p.calibrate);
         // Retract stays live even mid-op (the firmware accepts it from any
         // state) — it is the recovery action.
@@ -874,7 +1004,7 @@ mod tests {
         // Reproduces the bug: $STOP set FluidNC back to Idle but left the Maslow
         // FSM frozen at EXTENDING(3). Retract + Stop/E-Stop must be offered so
         // the user is not stuck; extend/calibrate stay gated (busy state).
-        let p = action_policy("Idle", Some(3), false);
+        let p = action_policy("Idle", Some(CalState::Extending), false);
         assert!(p.retract, "retract must recover a frozen EXTENDING state");
         assert!(p.stop && p.estop);
         assert!(!p.extend && !p.calibrate && !p.take_slack);
@@ -884,7 +1014,7 @@ mod tests {
     fn action_policy_busy_allows_stop_and_retract() {
         // Stop/E-Stop/Retract available across busy states regardless of FluidNC.
         for ms in [1, 3, 5, 6, 8, 9] {
-            let p = action_policy("Run", Some(ms), false);
+            let p = action_policy("Run", Some(CalState::from_code(ms)), false);
             assert!(p.stop && p.estop, "stop/estop must be available in state {ms}");
             assert!(p.retract, "retract must be available in busy state {ms}");
         }
@@ -892,7 +1022,7 @@ mod tests {
 
     #[test]
     fn action_policy_job_locks_everything_but_realtime() {
-        let p = action_policy("Run", Some(7), true);
+        let p = action_policy("Run", Some(CalState::ReadyToCut), true);
         assert!(!p.jog && !p.run && !p.retract && !p.stop);
         assert!(p.hold && p.resume && p.reset);
     }
