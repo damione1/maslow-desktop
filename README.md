@@ -1,5 +1,12 @@
 # Maslow Desktop
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+![FluidNC v1.21+](https://img.shields.io/badge/FluidNC-v1.21%2B-success)
+
 A friendly control panel for the [Maslow CNC](https://www.maslowcnc.com/) running FluidNC — on **desktop, tablet and phone**.
 
 It connects to your machine over the network and covers almost everything the built-in FluidNC web UI does, with two things it does better: it **respects the Maslow calibration state machine** so you can't push the machine into an invalid or stuck state, and it wraps calibration in a **plain-language guided wizard**.
@@ -36,6 +43,8 @@ It connects to your machine over the network and covers almost everything the bu
 ## Getting started
 
 You'll need a Maslow running **FluidNC** reachable on your network (by `maslow.local` or its IP).
+
+> **Firmware compatibility:** built and tested against the Maslow build of **FluidNC v1.21 – v1.22+**. It degrades gracefully across versions — a few options (apply-tension limiting) require firmware **≥ v1.22** and are simply hidden or ignored on older builds.
 
 ### Prerequisites
 
