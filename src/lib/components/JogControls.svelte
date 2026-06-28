@@ -3,7 +3,8 @@
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { jobProgress } from "$lib/stores/job";
   import { connection } from "$lib/stores/connection";
-  import { actionPolicy, maslowConfig, refreshConfig } from "$lib/stores/maslow";
+  import { actionPolicy, fullConfig, refreshConfig } from "$lib/stores/maslow";
+  import { configNumber } from "$lib/stores/config";
   import Modal from "./Modal.svelte";
 
   // `touch` enlarges the jog pad + controls for shop-floor finger use on
@@ -140,7 +141,8 @@
   let err = $state("");
 
   const editable = $derived(connected && !jobActive);
-  const config = $derived($maslowConfig);
+  // The discovered config entries; values are read by firmware path.
+  const config = $derived($fullConfig);
   const host = $derived($connection.host);
 
   const cfgKey = $derived<CfgPopup | null>(
@@ -155,10 +157,9 @@
   }
 
   function initDraft(key: CfgPopup) {
-    const c = $maslowConfig;
-    if (!c) return;
+    if (!config) return;
     const d: Record<string, number> = {};
-    for (const f of POPUPS[key].fields) d[f.key] = c[f.key];
+    for (const f of POPUPS[key].fields) d[f.key] = configNumber(config, f.path, 0);
     draft = d;
   }
 
@@ -181,7 +182,9 @@
 
   const dirty = $derived.by(() => {
     if (!cfgKey || !config) return false;
-    return POPUPS[cfgKey].fields.some((f) => draft[f.key] !== config[f.key]);
+    return POPUPS[cfgKey].fields.some(
+      (f) => draft[f.key] !== configNumber(config, f.path, 0),
+    );
   });
   const anyInvalid = $derived.by(() => {
     if (!cfgKey) return false;
@@ -190,14 +193,12 @@
   const canSave = $derived(editable && !busy && dirty && !anyInvalid);
 
   async function save() {
-    if (!cfgKey) return;
-    const c = $maslowConfig;
-    if (!c) return;
+    if (!cfgKey || !config) return;
     busy = true;
     err = "";
     try {
       for (const f of POPUPS[cfgKey].fields) {
-        if (draft[f.key] !== c[f.key]) {
+        if (draft[f.key] !== configNumber(config, f.path, 0)) {
           await invoke("write_maslow_setting", { host, path: f.path, value: String(draft[f.key]) });
         }
       }
