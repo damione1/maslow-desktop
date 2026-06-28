@@ -107,22 +107,15 @@
   const fmt = (n: number) => n.toFixed(1);
 </script>
 
-<section class="solver">
-  <header>
-    <span>Local solver</span>
-    <span class="sub">Levenberg–Marquardt</span>
-    {#if $measurements.length}
+<!-- Hidden until the firmware logs raw measurements (CLBM:) for a run. -->
+{#if $measurements.length}
+  <section class="solver">
+    <header>
+      <span>Local solver</span>
+      <span class="sub">Levenberg–Marquardt</span>
       <span class="count">{$measurements.length} waypoints</span>
-    {/if}
-  </header>
+    </header>
 
-  {#if !$measurements.length}
-    <div class="hint">
-      Raw measurements appear here after a calibration recompute (the firmware
-      logs <code>CLBM:</code>). Then you can re-solve anchors locally, exclude a
-      suspect waypoint without re-measuring, and write the result.
-    </div>
-  {:else}
     <div class="actions">
       <button class="primary" onclick={solve} disabled={busy}>
         {busy ? "Solving…" : "Solve locally"}
@@ -243,8 +236,8 @@
 
     {#if message}<div class="msg ok">{message}</div>{/if}
     {#if error}<div class="msg err">{error}</div>{/if}
-  {/if}
-</section>
+  </section>
+{/if}
 
 <style>
   .solver {
@@ -272,15 +265,6 @@
   .count {
     margin-left: auto;
     color: #9a9a9a;
-  }
-  .hint {
-    color: #9a9a9a;
-    line-height: 1.4;
-  }
-  .hint code {
-    background: #262626;
-    padding: 0 0.3em;
-    border-radius: 3px;
   }
   .actions {
     display: flex;
