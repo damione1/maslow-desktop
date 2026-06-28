@@ -251,6 +251,21 @@ fn job_active(job: &Option<Job>) -> bool {
     job.as_ref().is_some_and(|j| j.active())
 }
 
+/// True when the machine is executing or holding a job we do NOT own (an SD-card
+/// run): FluidNC is cutting or holding gcode (`Run`/`Hold`/`Cycle`/`Door`) while
+/// the Maslow calibration state is stable (not a belt operation). We must not
+/// inject `$MINFO`/`$GSTATE` line commands then. The firmware's update watchdog
+/// is only 100 ms (`UPDATE_WATCHDOG_MS`): if the protocol loop stalls past it
+/// (e.g. a feed-hold plus extra channel traffic) the firmware latches into a
+/// power-cycle-only emergency stop. The embedded UI likewise stays quiet during
+/// a job. A Maslow belt op (Retract/Extend/calibrate) keeps the polls so the UI
+/// still tracks its state, since that is the calibration flow the firmware
+/// expects to be polled.
+fn machine_running_unowned_job(ctx: &SocketCtx) -> bool {
+    let maslow_op = ctx.tracker.current().is_some_and(|s| s.is_busy());
+    matches!(ctx.fluidnc_state.as_str(), "Run" | "Hold" | "Cycle" | "Door") && !maslow_op
+}
+
 /// Send as many queued G-code lines as the firmware RX buffer allows.
 async fn pump(write: &mut WsSink, job: &mut Option<Job>) -> Result<(), String> {
     if let Some(j) = job.as_mut() {
@@ -482,7 +497,8 @@ async fn run_socket(
             _ = maslow_tick.tick() => {
                 if !upload_active.load(Ordering::Relaxed)
                     && ctx.capture.is_none()
-                    && !job_active(job) {
+                    && !job_active(job)
+                    && !machine_running_unowned_job(&ctx) {
                     // Short command names ($MINFO/$GSTATE), as the embedded UI uses;
                     // the long `$Maslow/getInfo` form is rejected by the firmware.
                     let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
@@ -495,7 +511,8 @@ async fn run_socket(
                 // hundred ms. Only $GSTATE (cheap, drives the policy); skipped
                 // during a job for the same char-counting reason as maslow_tick.
                 if !upload_active.load(Ordering::Relaxed)
-                    && !job_active(job) {
+                    && !job_active(job)
+                    && !machine_running_unowned_job(&ctx) {
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
                     ctx.pending_acks += 1;
                 }
