@@ -197,6 +197,9 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Stable gutter: the responsive toolpath canvas + a toggling scrollbar
+       otherwise feed back into each other and flicker the view. */
+    scrollbar-gutter: stable;
     -webkit-overflow-scrolling: touch;
   }
   .fw-warning {

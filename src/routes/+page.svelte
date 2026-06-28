@@ -278,6 +278,11 @@
     display: none;
     height: 100%;
     overflow: auto;
+    /* Reserve the scrollbar gutter so the panel width does not change when the
+       scrollbar appears/disappears. Without this, the responsive 2:1 toolpath
+       canvas (height = width/2) and the scrollbar feed back into each other and
+       the whole tab flickers. */
+    scrollbar-gutter: stable;
     flex-direction: column;
     gap: 14px;
     padding: 1em;
