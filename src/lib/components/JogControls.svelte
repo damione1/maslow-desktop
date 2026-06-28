@@ -298,8 +298,8 @@
   </div>
 
   <div class="row realtime">
-    <button class="hold" onclick={hold} disabled={!connected}>Hold !</button>
-    <button class="resume" onclick={resume} disabled={!connected}>Resume ~</button>
+    <button class="hold" onclick={hold} disabled={!allow("hold")}>Hold !</button>
+    <button class="resume" onclick={resume} disabled={!allow("resume")}>Resume ~</button>
     <button
       class="danger"
       onclick={reset}

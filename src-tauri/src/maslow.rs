@@ -318,10 +318,13 @@ pub fn action_policy(fluidnc: &str, maslow: Option<CalState>, job_active: bool) 
     // A stable state to *start* a belt/calibration op (these then drive Homing).
     let stable = idle || alarm;
 
+    // Realtime controls, gated on the FluidNC state so the buttons reflect what
+    // the command actually does: feed-hold only while something is moving, resume
+    // only while held. Reset (the soft-reset kill) is always available on a live
+    // link. These are out-of-band bytes, safe even mid-job.
     let mut p = ActionPolicy {
-        // Realtime byte commands — injected out-of-band, safe even mid-job.
-        hold: true,
-        resume: true,
+        hold: matches!(fluidnc, "Run" | "Jog" | "Home" | "Homing" | "Cycle"),
+        resume: matches!(fluidnc, "Hold" | "Door"),
         reset: true,
         ..Default::default()
     };
@@ -968,7 +971,8 @@ mod tests {
         // Extended, but NOT tensioned: cutting is unsafe (XY belts unpowered).
         assert!(!p.run, "run must be gated until READY_TO_CUT");
         assert!(p.retract && p.extend && p.calibrate && p.comply);
-        assert!(p.hold && p.resume && p.reset);
+        // Idle: nothing to feed-hold and nothing held, but the reset kill stays.
+        assert!(!p.hold && !p.resume && p.reset);
     }
 
     #[test]
@@ -1022,8 +1026,17 @@ mod tests {
 
     #[test]
     fn action_policy_job_locks_everything_but_realtime() {
+        // Mid-cut (state Run): feed-hold and reset available, resume is not (not
+        // held). Manual line actions are all locked out.
         let p = action_policy("Run", Some(CalState::ReadyToCut), true);
         assert!(!p.jog && !p.run && !p.retract && !p.stop);
-        assert!(p.hold && p.resume && p.reset);
+        assert!(p.hold && !p.resume && p.reset);
+    }
+
+    #[test]
+    fn action_policy_resume_only_when_held() {
+        // Held: resume is offered, a fresh feed-hold is not, reset always.
+        let p = action_policy("Hold", Some(CalState::ReadyToCut), true);
+        assert!(p.resume && !p.hold && p.reset);
     }
 }
