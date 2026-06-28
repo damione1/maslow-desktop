@@ -10,6 +10,17 @@
 
   let viewport: HTMLDivElement | undefined = $state();
   let autoscroll = $state(true);
+  let copied = $state(false);
+
+  async function copyConsole() {
+    try {
+      await navigator.clipboard.writeText($consoleLines.join("\n"));
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch {
+      // clipboard unavailable; ignore
+    }
+  }
 
   // Free-text command line: send arbitrary `$`/G-code for diagnostics ($#, $G,
   // $$, per-belt commands, …). Blocked during a job (a stray line would corrupt
@@ -77,7 +88,12 @@
 <section class="console">
   <header>
     <span>Console</span>
-    <button onclick={clearConsole}>Clear</button>
+    <div class="hdr-actions">
+      <button onclick={copyConsole} disabled={$consoleLines.length === 0}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+      <button onclick={clearConsole}>Clear</button>
+    </div>
   </header>
   <div class="lines" bind:this={viewport} onscroll={onScroll}>
     {#each $consoleLines as line}
@@ -130,6 +146,10 @@
     opacity: 0.8;
     flex: 0 0 auto;
   }
+  .hdr-actions {
+    display: flex;
+    gap: 0.5em;
+  }
   header button {
     font-size: 0.8em;
     padding: 0.2em 0.7em;
@@ -138,6 +158,10 @@
     background: #222;
     color: #ddd;
     cursor: pointer;
+  }
+  header button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
   .lines {
     flex: 1;
