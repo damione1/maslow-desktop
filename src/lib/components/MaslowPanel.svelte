@@ -6,9 +6,10 @@
     maslowState,
     actionPolicy,
     anchors,
-    maslowConfig,
+    fullConfig,
   } from "$lib/stores/maslow";
   import { isReadyToCut } from "$lib/stores/calState";
+  import { CFG, configNumber } from "$lib/stores/config";
 
   const connected = $derived($wsState === "connected");
   const policy = $derived($maslowState);
@@ -74,10 +75,9 @@
   // in machine coords. Mirrors the embedded UI's READY_TO_CUT park sequence,
   // using the configured park offsets (defaults if config not loaded).
   async function park() {
-    const c = $maslowConfig;
-    const z = c?.park_z ?? 2.0;
-    const x = c?.park_x ?? 0.0;
-    const y = c?.park_y ?? 0.0;
+    const z = configNumber($fullConfig, CFG.parkZ, 2.0);
+    const x = configNumber($fullConfig, CFG.parkX, 0.0);
+    const y = configNumber($fullConfig, CFG.parkY, 0.0);
     if (
       !window.confirm(
         `Park the machine? It will lift Z to ${z} then move to X${x} Y${y}.`,
