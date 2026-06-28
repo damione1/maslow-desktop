@@ -39,9 +39,15 @@ export const fwVersion = writable<string | null>(null);
 /** Connect the websocket and best-effort fetch the firmware version. Shared by
  * the desktop topbar and the mobile connection sheet so the logic lives once. */
 export async function connectWs(host: string): Promise<void> {
+  connection.update((c) => ({ ...c, host, error: "" }));
+  try {
+    // Rejects a malformed host before any reconnect loop is started.
+    await invoke("connect_ws", { host });
+  } catch (e) {
+    connection.update((c) => ({ ...c, state: "disconnected", error: String(e) }));
+    return;
+  }
   persistHost(host);
-  connection.update((c) => ({ ...c, host }));
-  await invoke("connect_ws", { host });
   try {
     fwVersion.set(await invoke<string | null>("firmware_version", { host }));
   } catch {

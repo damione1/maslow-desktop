@@ -88,6 +88,15 @@ pub async fn connect_ws(
     state: State<'_, ConnState>,
     host: String,
 ) -> Result<(), String> {
+    // Reject a malformed host up front. A bad URL can never connect, and the
+    // reconnect loop would otherwise retry it every few seconds and spam the
+    // console with "invalid uri character". Validate before touching any
+    // existing connection so a typo cannot drop a working one.
+    let url = ws_url(&host);
+    url.as_str()
+        .into_client_request()
+        .map_err(|e| format!("invalid host \"{}\": {e}", host.trim()))?;
+
     if let Some(flag) = state.current.lock().await.take() {
         flag.store(false, Ordering::SeqCst);
     }
@@ -98,7 +107,6 @@ pub async fn connect_ws(
     let (tx, rx) = mpsc::unbounded_channel::<WsCommand>();
     *state.tx.lock().await = Some(tx);
 
-    let url = ws_url(&host);
     let upload_active = state.upload_active.clone();
     tokio::spawn(async move {
         connection_loop(app, url, rx, running, upload_active).await;

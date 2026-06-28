@@ -85,6 +85,9 @@
       {:else}
         <span class="badge off">● Disconnected</span>
         <button onclick={connect}>Connect</button>
+        {#if $connection.error}
+          <span class="conn-err" title={$connection.error}>{$connection.error}</span>
+        {/if}
       {/if}
 
       {#if $machineStatus}
@@ -191,6 +194,14 @@
   }
   .badge.off {
     color: #888;
+  }
+  .conn-err {
+    font-size: 0.78em;
+    color: #ff8a8a;
+    max-width: 22em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .fw {
     font-size: 0.78em;
