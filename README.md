@@ -32,8 +32,8 @@ It connects to your machine over the network and covers almost everything the bu
 
 Prebuilt installers are on the [**Releases**](https://github.com/damione1/maslow-desktop/releases/latest) page:
 
-- **macOS** — `.dmg` (Apple Silicon & Intel), signed & notarized
-- **Windows** — `.msi` or `.exe` installer
+- **macOS**: `.dmg` for Apple Silicon and Intel
+- **Windows**: `.msi` or `.exe` installer
 
 > An Android `.apk` will be added once mobile signing is set up.
 
@@ -41,7 +41,7 @@ Prebuilt installers are on the [**Releases**](https://github.com/damione1/maslow
 
 You'll need a Maslow running **FluidNC** reachable on your network (by `maslow.local` or its IP).
 
-> **Firmware compatibility:** built and tested against the Maslow build of **FluidNC v1.21 to v1.22+**. It degrades gracefully across versions: a few options (apply-tension limiting) require firmware **≥ v1.22** and are simply hidden or ignored on older builds.
+> **Firmware compatibility:** tested against the Maslow build of **FluidNC v1.21 to v1.22**. Connecting to a firmware outside that range still works, but the app shows an "untested firmware" warning and some behaviour may differ. Within the range it degrades gracefully: a few options (apply-tension limiting) require firmware **v1.22 or newer** and are simply hidden or ignored on older builds.
 
 ### Prerequisites
 

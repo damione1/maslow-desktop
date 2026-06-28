@@ -8,6 +8,7 @@
     disconnectWs,
   } from "$lib/stores/connection";
   import { activeSection } from "$lib/stores/ui";
+  import { firmwareNotice } from "$lib/stores/firmware";
   import Modal from "./Modal.svelte";
   import MobileNav from "./MobileNav.svelte";
   import ControlView from "./ControlView.svelte";
@@ -66,6 +67,10 @@
       >⛔ E-STOP</button
     >
   </header>
+
+  {#if $firmwareNotice}
+    <div class="fw-warning" role="alert">⚠ {$firmwareNotice}</div>
+  {/if}
 
   <main class="content">
     <!-- Sections stay mounted (hidden) so the toolpath canvas keeps its drawing
@@ -193,6 +198,16 @@
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+  }
+  .fw-warning {
+    margin: 8px;
+    padding: 0.6em 0.8em;
+    background: #3a2a14;
+    border: 1px solid #6b4a1f;
+    border-radius: 8px;
+    color: #e0a83d;
+    font-size: 0.85em;
+    line-height: 1.4;
   }
   .section {
     display: none;

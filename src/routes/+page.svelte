@@ -7,6 +7,7 @@
     connectWs,
     disconnectWs,
   } from "$lib/stores/connection";
+  import { firmwareNotice } from "$lib/stores/firmware";
   import {
     wsState,
     machineStatus,
@@ -74,7 +75,11 @@
       {#if connected}
         <span class="badge ok">● Connected</span>
         {#if $fwVersion}
-          <span class="fw" title="Maslow firmware version">FW {$fwVersion}</span>
+          <span
+            class="fw"
+            class:untested={$firmwareNotice}
+            title={$firmwareNotice ?? "Maslow firmware version"}>FW {$fwVersion}</span
+          >
         {/if}
         <button class="ghost" onclick={disconnect}>Disconnect</button>
       {:else}
@@ -104,6 +109,9 @@
   {/snippet}
 
   {#snippet workspace()}
+    {#if $firmwareNotice}
+      <div class="fw-warning" role="alert">⚠ {$firmwareNotice}</div>
+    {/if}
     <TabBar />
     <div class="panels">
       <!-- Inactive tabs are kept mounted and hidden with display:none (not
@@ -192,6 +200,21 @@
     border-radius: 6px;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+  }
+  .fw.untested {
+    color: #e0a83d;
+    background: #3a2a14;
+    border: 1px solid #6b4a1f;
+  }
+  .fw-warning {
+    margin: 0 0 0.6em;
+    padding: 0.55em 0.8em;
+    background: #3a2a14;
+    border: 1px solid #6b4a1f;
+    border-radius: 8px;
+    color: #e0a83d;
+    font-size: 0.85em;
+    line-height: 1.4;
   }
   button {
     padding: 0.45em 1em;

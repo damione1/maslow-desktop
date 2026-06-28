@@ -67,7 +67,10 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Maslow Desktop ${{ github.ref_name }}"
-          releaseBody: "Download the installer for your platform below."
+          releaseBody: |
+            Download the installer for your platform below.
+
+            Tested firmware: FluidNC v1.21 to v1.22. Connecting to a Maslow outside that range still works, but the app shows an "untested firmware" warning and some behaviour may differ.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
