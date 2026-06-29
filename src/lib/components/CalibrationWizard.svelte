@@ -8,6 +8,7 @@
     calComplete,
     anchors,
   } from "$lib/stores/maslow";
+  import { CalState, isReadyToCut, isResumablePreCut } from "$lib/stores/calState";
 
   // Guided layer on top of the contextual MaslowPanel. The firmware owns the
   // calibration state machine, so prerequisites/enablement come straight from
@@ -116,13 +117,13 @@
   // maslow.yaml, reloaded at boot). `valid` means the machine already knows its
   // geometry → no recalibration needed, just re-tension.
   const calib = $derived($anchors);
-  const calibrated = $derived(calib?.valid ?? false);
+  const calibrated = $derived(calib?.calibrated ?? false);
 
   // Daily "resume" path: the machine booted with calibration intact and is in a
   // stable pre-cut state. From EXTENDEDOUT(4) we can apply tension straight to
   // READY_TO_CUT; from RETRACTED(2) we extend first, then apply tension.
   const resumeable = $derived(
-    connected && calibrated && !busy && (code === 4 || code === 2),
+    connected && calibrated && !busy && isResumablePreCut(code),
   );
 
   // The single next action that walks toward Ready to Cut on the resume path.
@@ -154,22 +155,22 @@
   // firmware owns the state, so this advances on its own as reports arrive.
   function stepForCode(c: number | null): number {
     switch (c) {
-      case 1:
-        return 0; // retracting
-      case 2:
+      case CalState.Retracting:
+        return 0;
+      case CalState.Retracted:
         return 1; // retracted → lower Z next
-      case 3:
-        return 2; // extending
-      case 4:
+      case CalState.Extending:
+        return 2;
+      case CalState.ExtendedOut:
         return 3; // extended → take slack / calibrate
-      case 5:
-        return 3; // taking slack
-      case 6:
-        return 4; // calibrating
-      case 9:
-        return 5; // computing
-      case 7:
-        return 6; // ready to cut
+      case CalState.TakingSlack:
+        return 3;
+      case CalState.CalibrationInProgress:
+        return 4;
+      case CalState.CalibrationComputing:
+        return 5;
+      case CalState.ReadyToCut:
+        return 6;
       default:
         return 0; // unknown / releasing tension → start over
     }
@@ -201,8 +202,9 @@
       return "Confirm Z is lowered all the way down first.";
     if (canDo(s)) return null;
     if (s.key === "takeSlack" || s.key === "calibrate") {
-      if (code === 3) return "Belts still extending — wait until they reach MAXIMUM (state “Belts Extended”).";
-      if (code === 0 || code === 2)
+      if (code === CalState.Extending)
+        return "Belts still extending — wait until they reach MAXIMUM (state “Belts Extended”).";
+      if (code === CalState.Unknown || code === CalState.Retracted)
         return "Belts aren't extended to maximum. Retract → lower Z → Extend fully before calibrating.";
       if (busy) return "Machine busy — let the current step finish.";
     }
@@ -210,17 +212,26 @@
   }
 
   function run(cmd: string | null) {
-    if (cmd) invoke("send_line", { line: cmd });
+    if (!cmd) return;
+    // Calibrate drives the full measurement grid; confirm before it moves.
+    if (
+      cmd === "$CAL" &&
+      !window.confirm(
+        "Start calibration? The machine will drive to every measurement waypoint across the work area.",
+      )
+    )
+      return;
+    invoke("send_line", { line: cmd });
   }
 </script>
 
 <section class="wizard">
   <header>
     <span>Calibration Wizard</span>
-    <span class="state" class:busy class:ready={code === 7}>
+    <span class="state" class:busy class:ready={isReadyToCut(code)}>
       {mState?.label ?? "—"}
     </span>
-    {#if code === 6}
+    {#if code === CalState.CalibrationInProgress}
       <span class="wp">{$waypoints.length} waypoints</span>
     {/if}
   </header>
@@ -240,7 +251,7 @@
        stop saved it. A hard E-STOP / power-cycle loses it, so the firmware
        genuinely needs Retract → Extend to re-zero the belts. Spell that out so
        "Calibrated ✓ but must retract?!" isn't a contradiction. -->
-  {#if calibrated && code === 0}
+  {#if calibrated && code === CalState.Unknown}
     <div class="lost-belts">
       Calibration is kept, but the belt lengths were lost (hard stop or
       power-cycle). <strong>Retract → Extend</strong> to re-zero the belts, then
@@ -267,7 +278,7 @@
        belts + frame don't sit under tension. $CMP runs the firmware's
        release-tension transition; the morning resume is Retract → Extend →
        Apply Tension (calibration stays valid). -->
-  {#if code === 7}
+  {#if isReadyToCut(code)}
     <div class="release">
       <div class="release-head">Done for the day?</div>
       <p class="release-hint">

@@ -88,6 +88,15 @@ pub async fn connect_ws(
     state: State<'_, ConnState>,
     host: String,
 ) -> Result<(), String> {
+    // Reject a malformed host up front. A bad URL can never connect, and the
+    // reconnect loop would otherwise retry it every few seconds and spam the
+    // console with "invalid uri character". Validate before touching any
+    // existing connection so a typo cannot drop a working one.
+    let url = ws_url(&host);
+    url.as_str()
+        .into_client_request()
+        .map_err(|e| format!("invalid host \"{}\": {e}", host.trim()))?;
+
     if let Some(flag) = state.current.lock().await.take() {
         flag.store(false, Ordering::SeqCst);
     }
@@ -98,7 +107,6 @@ pub async fn connect_ws(
     let (tx, rx) = mpsc::unbounded_channel::<WsCommand>();
     *state.tx.lock().await = Some(tx);
 
-    let url = ws_url(&host);
     let upload_active = state.upload_active.clone();
     tokio::spawn(async move {
         connection_loop(app, url, rx, running, upload_active).await;
@@ -245,6 +253,27 @@ const BURST_INTERVAL_MS: u64 = 250;
 const STATUS_FAST_MS: u64 = 250;
 const STATUS_IDLE_MS: u64 = 1000;
 
+/// Whether a job is currently occupying the connection (blocking manual input
+/// and the telemetry polls).
+fn job_active(job: &Option<Job>) -> bool {
+    job.as_ref().is_some_and(|j| j.active())
+}
+
+/// True when the machine is executing or holding a job we do NOT own (an SD-card
+/// run): FluidNC is cutting or holding gcode (`Run`/`Hold`/`Cycle`/`Door`) while
+/// the Maslow calibration state is stable (not a belt operation). We must not
+/// inject `$MINFO`/`$GSTATE` line commands then. The firmware's update watchdog
+/// is only 100 ms (`UPDATE_WATCHDOG_MS`): if the protocol loop stalls past it
+/// (e.g. a feed-hold plus extra channel traffic) the firmware latches into a
+/// power-cycle-only emergency stop. The embedded UI likewise stays quiet during
+/// a job. A Maslow belt op (Retract/Extend/calibrate) keeps the polls so the UI
+/// still tracks its state, since that is the calibration flow the firmware
+/// expects to be polled.
+fn machine_running_unowned_job(ctx: &SocketCtx) -> bool {
+    let maslow_op = ctx.tracker.current().is_some_and(|s| s.is_busy());
+    matches!(ctx.fluidnc_state.as_str(), "Run" | "Hold" | "Cycle" | "Door") && !maslow_op
+}
+
 /// Send as many queued G-code lines as the firmware RX buffer allows.
 async fn pump(write: &mut WsSink, job: &mut Option<Job>) -> Result<(), String> {
     if let Some(j) = job.as_mut() {
@@ -293,7 +322,7 @@ async fn run_socket(
     let mut last_activity = Instant::now();
     let mut ctx = SocketCtx::default();
     // Emit an initial policy so realtime controls light up immediately.
-    refresh_policy(app, &mut ctx, job.as_ref().map_or(false, |j| j.active()));
+    refresh_policy(app, &mut ctx, job_active(job));
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -332,13 +361,17 @@ async fn run_socket(
             cmd = rx.recv() => {
                 match cmd {
                     Some(WsCommand::Line(mut l)) => {
-                        if job.as_ref().map_or(false, |j| j.active()) {
+                        if job_active(job) {
                             let _ = app.emit("grbl-line",
                                 "[blocked] stop the job to send manual commands".to_string());
                         } else {
                             let is_action = is_maslow_action(&l);
                             if !l.ends_with('\n') { l.push('\n'); }
                             write.send(Message::Text(l)).await.map_err(|e| e.to_string())?;
+                            // This line will return one ok/error; account for it
+                            // so it is never miscounted against a job that starts
+                            // moments later.
+                            ctx.pending_acks += 1;
                             if is_action {
                                 // Reflect the new firmware state ASAP: ask for it
                                 // right now (one $MINFO + $GSTATE, queued right
@@ -349,6 +382,7 @@ async fn run_socket(
                                 // counting only mid-job, which can't happen here.
                                 let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
                                 let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
+                                ctx.pending_acks += 2;
                                 burst_remaining = BURST_POLLS;
                                 maslow_burst.reset();
                             }
@@ -393,12 +427,22 @@ async fn run_socket(
                         streaming::emit_progress(app, job, None);
                     }
                     Some(WsCommand::StopJob) => {
+                        // A job stop must actually halt the machine. Clearing the
+                        // stream alone leaves the firmware's planner buffer full,
+                        // so it keeps cutting the lines already queued. Feed-hold
+                        // to decelerate, then a soft reset (0x18) to flush that
+                        // buffer and stop. This leaves FluidNC in Alarm; the
+                        // operator unlocks/homes before the next job.
+                        let _ = write.send(Message::Binary(vec![b'!'])).await;
+                        let _ = write.send(Message::Binary(vec![0x18])).await;
                         streaming::clear_saved(app);
                         *job = None;
                         streaming::emit_progress(app, job, None);
+                        // The job lock is gone; recompute the action policy.
+                        refresh_policy(app, &mut ctx, false);
                     }
                     Some(WsCommand::DumpConfig) => {
-                        if job.as_ref().map_or(false, |j| j.active()) {
+                        if job_active(job) {
                             let _ = app.emit("config-dump-error",
                                 "stop the job to read the config".to_string());
                         } else {
@@ -407,6 +451,10 @@ async fn run_socket(
                             ctx.capture = Some(Vec::new());
                             ctx.capture_started = Some(Instant::now());
                             burst_remaining = 0;
+                            // The capture branch consumes the dump's terminating
+                            // ok itself; clear any pending poll acks so they can't
+                            // be confused with it.
+                            ctx.pending_acks = 0;
                             write.send(Message::Text("$CD\n".to_string()))
                                 .await.map_err(|e| e.to_string())?;
                         }
@@ -457,11 +505,13 @@ async fn run_socket(
             _ = maslow_tick.tick() => {
                 if !upload_active.load(Ordering::Relaxed)
                     && ctx.capture.is_none()
-                    && !job.as_ref().map_or(false, |j| j.active()) {
+                    && !job_active(job)
+                    && !machine_running_unowned_job(&ctx) {
                     // Short command names ($MINFO/$GSTATE), as the embedded UI uses;
                     // the long `$Maslow/getInfo` form is rejected by the firmware.
                     let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
+                    ctx.pending_acks += 2;
                 }
             }
             _ = maslow_burst.tick(), if burst_remaining > 0 => {
@@ -469,8 +519,10 @@ async fn run_socket(
                 // hundred ms. Only $GSTATE (cheap, drives the policy); skipped
                 // during a job for the same char-counting reason as maslow_tick.
                 if !upload_active.load(Ordering::Relaxed)
-                    && !job.as_ref().map_or(false, |j| j.active()) {
+                    && !job_active(job)
+                    && !machine_running_unowned_job(&ctx) {
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
+                    ctx.pending_acks += 1;
                 }
                 burst_remaining -= 1;
             }
@@ -488,7 +540,11 @@ async fn handle_incoming(
     job: &mut Option<Job>,
 ) -> Result<(), String> {
     if let Some(is_error) = ack_kind(line) {
-        if job.as_ref().map_or(false, |j| j.active()) {
+        if ctx.pending_acks > 0 {
+            // This ack belongs to a poll/manual command we issued out-of-band,
+            // not to a streamed line. Consume it so it cannot drift the cursor.
+            ctx.pending_acks -= 1;
+        } else if job_active(job) {
             let done = job.as_mut().map(|j| j.ack(is_error)).unwrap_or(false);
             if let Some(j) = job.as_mut() {
                 streaming::maybe_persist(app, j);
@@ -514,7 +570,7 @@ async fn handle_incoming(
         }
     }
 
-    let job_active = job.as_ref().map_or(false, |j| j.active());
+    let job_active = job_active(job);
     route_line(app, line, ctx, job_active);
     Ok(())
 }
@@ -562,6 +618,12 @@ struct SocketCtx {
     capture: Option<Vec<String>>,
     /// Start time of the in-flight capture, for the timeout guard.
     capture_started: Option<Instant>,
+    /// Count of `ok`/`error` responses still expected from commands we issued
+    /// that are NOT job lines (the `$MINFO`/`$GSTATE` polls, the burst poll, and
+    /// any manual/action line). The job ack handler swallows exactly these so a
+    /// stray poll ack landing right as a job starts can never be miscounted as a
+    /// streamed-line ack and drift the char-counting cursor.
+    pending_acks: usize,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -574,15 +636,15 @@ struct Discord {
     to_label: String,
 }
 
-fn emit_discord(app: &AppHandle, kind: &'static str, from: i32, to: i32) {
+fn emit_discord(app: &AppHandle, kind: &'static str, from: maslow::CalState, to: maslow::CalState) {
     let _ = app.emit(
         "maslow-discord",
         Discord {
             kind,
-            from,
-            to,
-            from_label: maslow::label_for(from).to_string(),
-            to_label: maslow::label_for(to).to_string(),
+            from: from.code(),
+            to: to.code(),
+            from_label: from.label().to_string(),
+            to_label: to.label().to_string(),
         },
     );
 }
@@ -655,6 +717,7 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         return;
     }
     if let Some(state) = maslow::parse_state(line) {
+        let state = maslow::CalState::from_code(state);
         match ctx.tracker.observe(state, STATE_DEBOUNCE_MS) {
             maslow::Observation::First(s) | maslow::Observation::Valid(s) => {
                 let _ = app.emit("maslow-state", maslow::policy_for(s));

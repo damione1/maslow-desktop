@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { pushConsoleLine, wsState } from "$lib/stores/machine";
 import { connection } from "$lib/stores/connection";
+import { CalState } from "$lib/stores/calState";
 
 export interface MaslowInfo {
   homed: boolean;
@@ -24,7 +25,6 @@ export interface StatePolicy {
   code: number;
   label: string;
   busy: boolean;
-  allowed: string[];
 }
 
 export interface Waypoint {
@@ -65,6 +65,8 @@ export interface Anchors {
   br_x: number;
   br_y: number;
   valid: boolean;
+  /** Valid AND not the firmware defaults — proof a calibration actually ran. */
+  calibrated: boolean;
 }
 
 /** Full Maslow firmware configuration (anchors + work area + tension),
@@ -249,7 +251,7 @@ export async function initMaslowListeners(): Promise<void> {
     const policy = e.payload;
     // Entering calibration starts a fresh waypoint run, and invalidates any
     // measurements/solve from a previous run.
-    if (policy.code === 6) {
+    if (policy.code === CalState.CalibrationInProgress) {
       waypoints.set([]);
       measurements.set([]);
       firmwareFit.set(null);

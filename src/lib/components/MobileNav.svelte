@@ -1,6 +1,7 @@
 <script lang="ts">
   import { activeSection, type Section } from "$lib/stores/ui";
   import { anchors, maslowState } from "$lib/stores/maslow";
+  import { isResumablePreCut } from "$lib/stores/calState";
 
   const items: { id: Section; label: string }[] = [
     { id: "control", label: "Control" },
@@ -12,9 +13,9 @@
   // Same daily-resume cue as the desktop tab bar: a dot on Setup when the
   // machine boots calibrated + idle in EXTENDEDOUT(4)/RETRACTED(2).
   const resumeHint = $derived(
-    ($anchors?.valid ?? false) &&
+    ($anchors?.calibrated ?? false) &&
       !($maslowState?.busy ?? false) &&
-      ($maslowState?.code === 4 || $maslowState?.code === 2),
+      isResumablePreCut($maslowState?.code),
   );
 </script>
 

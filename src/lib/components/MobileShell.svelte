@@ -8,6 +8,7 @@
     disconnectWs,
   } from "$lib/stores/connection";
   import { activeSection } from "$lib/stores/ui";
+  import { firmwareNotice } from "$lib/stores/firmware";
   import Modal from "./Modal.svelte";
   import MobileNav from "./MobileNav.svelte";
   import ControlView from "./ControlView.svelte";
@@ -23,7 +24,7 @@
   let host = $state($connection.host);
 
   // 0x18 = Ctrl-X soft reset — the universal kill, always reachable from chrome.
-  function stop() {
+  function estop() {
     invoke("send_realtime", { byte: 0x18 });
   }
 
@@ -58,8 +59,18 @@
       {connected ? "Connected" : "Connect"}
     </button>
 
-    <button class="stop" onclick={stop} disabled={!connected}>STOP</button>
+    <button
+      class="stop"
+      onclick={estop}
+      disabled={!connected}
+      title="Emergency stop — halts all motion (soft reset, Ctrl-X / 0x18). Recoverable."
+      >⛔ E-STOP</button
+    >
   </header>
+
+  {#if $firmwareNotice}
+    <div class="fw-warning" role="alert">⚠ {$firmwareNotice}</div>
+  {/if}
 
   <main class="content">
     <!-- Sections stay mounted (hidden) so the toolpath canvas keeps its drawing
@@ -186,7 +197,20 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Stable gutter: the responsive toolpath canvas + a toggling scrollbar
+       otherwise feed back into each other and flicker the view. */
+    scrollbar-gutter: stable;
     -webkit-overflow-scrolling: touch;
+  }
+  .fw-warning {
+    margin: 8px;
+    padding: 0.6em 0.8em;
+    background: #3a2a14;
+    border: 1px solid #6b4a1f;
+    border-radius: 8px;
+    color: #e0a83d;
+    font-size: 0.85em;
+    line-height: 1.4;
   }
   .section {
     display: none;
