@@ -106,7 +106,9 @@
     }
   }
 
-  // Upload a local file into the directory currently being browsed.
+  // Upload a local file into the directory currently being browsed, then load
+  // it as the active job (preview, not run) so the operator lands back in the
+  // Job zone with it selected.
   async function upload() {
     const sel = await open({
       multiple: false,
@@ -114,6 +116,7 @@
       filters: [GCODE_FILTER],
     });
     if (typeof sel !== "string") return;
+    const name = sel.split(/[\\/]/).pop() ?? sel;
     uploading = true;
     error = "";
     try {
@@ -122,7 +125,7 @@
         dir: path,
         localPath: sel,
       });
-      refresh();
+      await select(name);
     } catch (e) {
       error = String(e);
     } finally {
