@@ -7,6 +7,7 @@
     connectWs,
     disconnectWs,
   } from "$lib/stores/connection";
+  import { firmwareNotice } from "$lib/stores/firmware";
   import {
     wsState,
     machineStatus,
@@ -74,12 +75,19 @@
       {#if connected}
         <span class="badge ok">● Connected</span>
         {#if $fwVersion}
-          <span class="fw" title="Maslow firmware version">FW {$fwVersion}</span>
+          <span
+            class="fw"
+            class:untested={$firmwareNotice}
+            title={$firmwareNotice ?? "Maslow firmware version"}>FW {$fwVersion}</span
+          >
         {/if}
         <button class="ghost" onclick={disconnect}>Disconnect</button>
       {:else}
         <span class="badge off">● Disconnected</span>
         <button onclick={connect}>Connect</button>
+        {#if $connection.error}
+          <span class="conn-err" title={$connection.error}>{$connection.error}</span>
+        {/if}
       {/if}
 
       {#if $machineStatus}
@@ -96,7 +104,7 @@
         class="estop"
         onclick={estop}
         disabled={!connected}
-        title="Emergency stop — realtime soft reset (Ctrl-X / 0x18)"
+        title="Emergency stop — halts all motion immediately (realtime soft reset, Ctrl-X / 0x18). Recoverable: unlock or home afterward. Same as the rail's Reset."
       >
         ⛔ E-STOP
       </button>
@@ -104,6 +112,9 @@
   {/snippet}
 
   {#snippet workspace()}
+    {#if $firmwareNotice}
+      <div class="fw-warning" role="alert">⚠ {$firmwareNotice}</div>
+    {/if}
     <TabBar />
     <div class="panels">
       <!-- Inactive tabs are kept mounted and hidden with display:none (not
@@ -184,6 +195,14 @@
   .badge.off {
     color: #888;
   }
+  .conn-err {
+    font-size: 0.78em;
+    color: #ff8a8a;
+    max-width: 22em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .fw {
     font-size: 0.78em;
     color: #9bb4d8;
@@ -192,6 +211,21 @@
     border-radius: 6px;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+  }
+  .fw.untested {
+    color: #e0a83d;
+    background: #3a2a14;
+    border: 1px solid #6b4a1f;
+  }
+  .fw-warning {
+    margin: 0 0 0.6em;
+    padding: 0.55em 0.8em;
+    background: #3a2a14;
+    border: 1px solid #6b4a1f;
+    border-radius: 8px;
+    color: #e0a83d;
+    font-size: 0.85em;
+    line-height: 1.4;
   }
   button {
     padding: 0.45em 1em;
@@ -255,6 +289,11 @@
     display: none;
     height: 100%;
     overflow: auto;
+    /* Reserve the scrollbar gutter so the panel width does not change when the
+       scrollbar appears/disappears. Without this, the responsive 2:1 toolpath
+       canvas (height = width/2) and the scrollbar feed back into each other and
+       the whole tab flickers. */
+    scrollbar-gutter: stable;
     flex-direction: column;
     gap: 14px;
     padding: 1em;

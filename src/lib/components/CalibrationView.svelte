@@ -67,23 +67,23 @@
   });
 </script>
 
-<section class="cal">
-  <header>
-    <span>Calibration</span>
-    <span class="count">{pts.length} waypoints</span>
-    {#if $maslowState?.busy}<span class="live">● live</span>{/if}
-  </header>
+<!-- Hidden entirely until there is something to show (waypoints or a live
+     calibration run); at idle this would just be an empty black box. -->
+{#if active}
+  <section class="cal">
+    <header>
+      <span>Calibration</span>
+      <span class="count">{pts.length} waypoints</span>
+      {#if $maslowState?.busy}<span class="live">● live</span>{/if}
+    </header>
 
-  {#if $calComplete}
-    <div class="done">✓ Calibration complete</div>
-  {/if}
+    {#if $calComplete}
+      <div class="done">✓ Calibration complete</div>
+    {/if}
 
-  {#if active}
     <canvas bind:this={canvas} width="320" height="240"></canvas>
-  {:else}
-    <div class="idle">Waypoints appear here while calibration runs.</div>
-  {/if}
-</section>
+  </section>
+{/if}
 
 <style>
   .cal {
@@ -124,11 +124,6 @@
     border: 1px solid #1f5a36;
     border-radius: 7px;
     padding: 0.4em 0.6em;
-  }
-  .idle {
-    font-size: 0.8em;
-    opacity: 0.45;
-    padding: 0.2em 0;
   }
   canvas {
     display: block;

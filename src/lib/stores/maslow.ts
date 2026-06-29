@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { pushConsoleLine, wsState } from "$lib/stores/machine";
 import { connection } from "$lib/stores/connection";
+import { CalState } from "$lib/stores/calState";
 
 export interface MaslowInfo {
   homed: boolean;
@@ -24,7 +25,6 @@ export interface StatePolicy {
   code: number;
   label: string;
   busy: boolean;
-  allowed: string[];
 }
 
 export interface Waypoint {
@@ -65,44 +65,8 @@ export interface Anchors {
   br_x: number;
   br_y: number;
   valid: boolean;
-}
-
-/** Full Maslow firmware configuration (anchors + work area + tension),
- * read/written via `$/<key>`. Field names map to the FluidNC config keys. */
-export interface MaslowConfig {
-  tl_x: number;
-  tl_y: number;
-  tl_z: number;
-  tr_x: number;
-  tr_y: number;
-  tr_z: number;
-  bl_x: number;
-  bl_y: number;
-  bl_z: number;
-  br_x: number;
-  br_y: number;
-  br_z: number;
-  work_area_x: number;
-  work_area_y: number;
-  work_area_center_offset_x: number;
-  work_area_center_offset_y: number;
-  retract_current_threshold: number;
-  extend_dist: number;
-  apply_tension_belt_retraction_limit: number;
-  apply_tension_allow_limiting: boolean;
-  spoilboard_thickness: number;
-  work_thickness: number;
-  calibration_grid_size: number;
-  calibration_grid_width_x: number;
-  calibration_grid_height_y: number;
-  acceptable_calibration_threshold: number;
-  scale_x: number;
-  scale_y: number;
-  vertical: boolean;
-  park_x: number;
-  park_y: number;
-  park_z: number;
-  anchors_valid: boolean;
+  /** Valid AND not the firmware defaults — proof a calibration actually ran. */
+  calibrated: boolean;
 }
 
 interface Discord {
@@ -179,8 +143,6 @@ export const calComplete = writable(false);
 export const actionPolicy = writable<ActionPolicy | null>(null);
 /** Frame anchors read from the firmware config, or null until first read. */
 export const anchors = writable<Anchors | null>(null);
-/** Full editable Maslow config, or null until first read of the config screen. */
-export const maslowConfig = writable<MaslowConfig | null>(null);
 
 /** Raw belt measurements from the last `CLBM:` log, input to the local solver. */
 export const measurements = writable<Measurement[]>([]);
@@ -225,7 +187,7 @@ export const fullConfig = writable<ConfigEntry[] | null>(null);
 /** Request a `$CD` config dump over the WS. The HTTP `/command` endpoint
  * returns an empty body for `$`/`$/` commands (the firmware routes the output
  * to the active WS channel instead), so reads must go over the socket. One dump
- * fills `fullConfig`, `maslowConfig` and `anchors` via the events below. */
+ * fills `fullConfig` and `anchors` via the events below. */
 export async function requestConfigDump(): Promise<void> {
   if (get(wsState) !== "connected") return;
   await invoke("request_config_dump");
@@ -249,7 +211,7 @@ export async function initMaslowListeners(): Promise<void> {
     const policy = e.payload;
     // Entering calibration starts a fresh waypoint run, and invalidates any
     // measurements/solve from a previous run.
-    if (policy.code === 6) {
+    if (policy.code === CalState.CalibrationInProgress) {
       waypoints.set([]);
       measurements.set([]);
       firmwareFit.set(null);
@@ -285,9 +247,8 @@ export async function initMaslowListeners(): Promise<void> {
     refreshAnchors();
   });
 
-  // A single `$CD` dump (requestConfigDump) fills all three config stores.
+  // A single `$CD` dump (requestConfigDump) fills the config + anchors stores.
   await listen<ConfigEntry[]>("config-dump", (e) => fullConfig.set(e.payload));
-  await listen<MaslowConfig>("maslow-config", (e) => maslowConfig.set(e.payload));
   await listen<Anchors>("maslow-anchors", (e) => anchors.set(e.payload));
   await listen<string>("config-dump-error", (e) =>
     pushConsoleLine(`[config dump] ${e.payload}`),
@@ -313,7 +274,6 @@ export async function initMaslowListeners(): Promise<void> {
       maslowState.set(null);
       actionPolicy.set(null);
       anchors.set(null);
-      maslowConfig.set(null);
       fullConfig.set(null);
       measurements.set([]);
       firmwareFit.set(null);

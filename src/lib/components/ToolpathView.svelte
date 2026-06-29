@@ -2,7 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { jobProgress, toolpath, toolpathPath } from "$lib/stores/job";
-  import { actionPolicy, maslowConfig } from "$lib/stores/maslow";
+  import { actionPolicy, fullConfig } from "$lib/stores/maslow";
+  import { CFG, configNumber } from "$lib/stores/config";
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let wrap: HTMLDivElement | undefined = $state();
@@ -13,7 +14,9 @@
   let view = $state<View>("path");
 
   const tp = $derived($toolpath);
-  const cfg = $derived($maslowConfig);
+  // Work-area geometry, read from the discovered machine config by path.
+  const workAreaX = $derived(configNumber($fullConfig, CFG.workAreaX, 0));
+  const workAreaY = $derived(configNumber($fullConfig, CFG.workAreaY, 0));
   const connected = $derived($wsState === "connected");
   const jobActive = $derived(
     $jobProgress?.state === "running" || $jobProgress?.state === "paused",
@@ -21,9 +24,7 @@
   const canTrace = $derived(
     connected && !jobActive && ($actionPolicy?.jog ?? false) && (tp?.has_bounds ?? false),
   );
-  const hasMachine = $derived(
-    !!cfg && cfg.work_area_x > 0 && cfg.work_area_y > 0,
-  );
+  const hasMachine = $derived(workAreaX > 0 && workAreaY > 0);
 
   const dims = $derived(
     tp?.has_bounds ? { w: tp.max_x - tp.min_x, h: tp.max_y - tp.min_y } : null,
@@ -49,14 +50,14 @@
   // The machine work-area rectangle in work coords (centered on the configured
   // offset), mirroring the firmware's workAreaX/Y + center offset.
   const machineRect = $derived.by(() => {
-    if (!hasMachine || !cfg) return null;
-    const cx = cfg.work_area_center_offset_x ?? 0;
-    const cy = cfg.work_area_center_offset_y ?? 0;
+    if (!hasMachine) return null;
+    const cx = configNumber($fullConfig, CFG.workAreaCenterOffsetX, 0);
+    const cy = configNumber($fullConfig, CFG.workAreaCenterOffsetY, 0);
     return {
-      minx: cx - cfg.work_area_x / 2,
-      maxx: cx + cfg.work_area_x / 2,
-      miny: cy - cfg.work_area_y / 2,
-      maxy: cy + cfg.work_area_y / 2,
+      minx: cx - workAreaX / 2,
+      maxx: cx + workAreaX / 2,
+      miny: cy - workAreaY / 2,
+      maxy: cy + workAreaY / 2,
     };
   });
 
@@ -261,7 +262,7 @@
   </div>
 
   {#if !tp || tp.segments.length === 0}
-    <div class="hint">Select a local G-code file to preview its toolpath.</div>
+    <div class="hint">Load a local or SD-card G-code file to preview its toolpath.</div>
   {:else}
     <div class="legend">
       <span class="feed">— cut</span>

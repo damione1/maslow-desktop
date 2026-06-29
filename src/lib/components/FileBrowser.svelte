@@ -1,12 +1,21 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
-  import { jobProgress, loadSdToolpath } from "$lib/stores/job";
+  import { loadSdToolpath } from "$lib/stores/job";
 
-  // Called after a successful preview so the parent (e.g. the SD modal) can
-  // close and reveal the toolpath underneath.
-  let { onpreview }: { onpreview?: () => void } = $props();
+  const GCODE_FILTER = {
+    name: "G-code",
+    extensions: ["nc", "gcode", "gc", "ngc", "tap", "cnc", "txt"],
+  };
+
+  // Called after the operator picks an SD file: the parent (Job panel) records
+  // it as the loaded job and closes the modal. Running happens from the Job
+  // zone's single Start button, not from here, so the two job sources (local
+  // stream vs SD card) share one launch path.
+  let { onselect }: { onselect?: (f: { path: string; name: string }) => void } =
+    $props();
 
   interface SdEntry {
     name: string;
@@ -17,14 +26,10 @@
   let path = $state("/");
   let entries = $state<SdEntry[]>([]);
   let loading = $state(false);
+  let uploading = $state(false);
   let error = $state("");
 
   const connected = $derived($wsState === "connected");
-  const jobActive = $derived(
-    $jobProgress !== null &&
-      $jobProgress.state !== "done" &&
-      $jobProgress.state !== "error",
-  );
 
   function isDir(e: SdEntry): boolean {
     return e.isdir === true || String(e.size) === "-1";
@@ -75,6 +80,8 @@
   }
 
   async function del(name: string) {
+    if (!window.confirm(`Delete ${name} from the SD card? This cannot be undone.`))
+      return;
     try {
       await invoke("delete_file", {
         host: $connection.host,
@@ -87,18 +94,42 @@
     }
   }
 
-  function run(name: string) {
-    // Firmware-side run from SD (not the client streamer).
-    invoke("send_line", { line: `$SD/Run=${fullPath(name)}` });
-  }
-
-  async function preview(name: string) {
+  // Pick an SD file as the loaded job: parse its toolpath for preview and hand
+  // the path back to the Job panel. The actual run is launched there.
+  async function select(name: string) {
     error = "";
     try {
       await loadSdToolpath($connection.host, fullPath(name));
-      onpreview?.();
+      onselect?.({ path: fullPath(name), name });
     } catch (e) {
       error = String(e);
+    }
+  }
+
+  // Upload a local file into the directory currently being browsed, then load
+  // it as the active job (preview, not run) so the operator lands back in the
+  // Job zone with it selected.
+  async function upload() {
+    const sel = await open({
+      multiple: false,
+      directory: false,
+      filters: [GCODE_FILTER],
+    });
+    if (typeof sel !== "string") return;
+    const name = sel.split(/[\\/]/).pop() ?? sel;
+    uploading = true;
+    error = "";
+    try {
+      await invoke("upload_file", {
+        host: $connection.host,
+        dir: path,
+        localPath: sel,
+      });
+      await select(name);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      uploading = false;
     }
   }
 
@@ -113,6 +144,9 @@
   <header>
     <span>SD Files</span>
     <span class="path">{path}</span>
+    <button class="ghost sm" onclick={upload} disabled={!connected || uploading}>
+      {uploading ? "Uploading…" : "Upload…"}
+    </button>
     <button class="ghost sm" onclick={refresh} disabled={!connected || loading}>
       {loading ? "…" : "Refresh"}
     </button>
@@ -135,8 +169,7 @@
         {/if}
         <span class="size">{humanSize(e)}</span>
         {#if !isDir(e)}
-          <button class="sm" onclick={() => preview(e.name)}>Preview</button>
-          <button class="sm" onclick={() => run(e.name)} disabled={jobActive}>Run</button>
+          <button class="sm primary" onclick={() => select(e.name)}>Select</button>
           <button class="sm danger" onclick={() => del(e.name)}>✕</button>
         {/if}
       </div>
@@ -243,6 +276,11 @@
   button.sm:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+  button.sm.primary {
+    border-color: #396cd8;
+    background: #396cd8;
+    color: #fff;
   }
   .ghost {
     background: transparent;
