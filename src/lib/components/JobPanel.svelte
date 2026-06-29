@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { connection } from "$lib/stores/connection";
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { actionPolicy } from "$lib/stores/maslow";
   import {
@@ -199,25 +198,6 @@
       return;
     invoke("send_realtime", { byte: 0x18 });
   }
-
-  async function uploadToSd() {
-    const p = await pickFile();
-    if (!p) return;
-    busy = true;
-    notice = `Uploading ${basename(p)}…`;
-    try {
-      await invoke("upload_file", {
-        host: $connection.host,
-        dir: "/",
-        localPath: p,
-      });
-      notice = `Uploaded ${basename(p)} to /SD`;
-    } catch (e) {
-      notice = `Upload error: ${e}`;
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <section class="job">
@@ -265,9 +245,6 @@
           Browse SD card…
         </button>
       </div>
-      <button class="ghost sm upload" onclick={uploadToSd} disabled={!connected || busy}>
-        Upload file to SD
-      </button>
     {/if}
   {/if}
 
@@ -371,9 +348,6 @@
   }
   .source-pick button {
     flex: 1;
-  }
-  .upload {
-    align-self: flex-start;
   }
   .loaded,
   .sd-running {

@@ -1,8 +1,14 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
   import { loadSdToolpath } from "$lib/stores/job";
+
+  const GCODE_FILTER = {
+    name: "G-code",
+    extensions: ["nc", "gcode", "gc", "ngc", "tap", "cnc", "txt"],
+  };
 
   // Called after the operator picks an SD file: the parent (Job panel) records
   // it as the loaded job and closes the modal. Running happens from the Job
@@ -20,6 +26,7 @@
   let path = $state("/");
   let entries = $state<SdEntry[]>([]);
   let loading = $state(false);
+  let uploading = $state(false);
   let error = $state("");
 
   const connected = $derived($wsState === "connected");
@@ -99,6 +106,30 @@
     }
   }
 
+  // Upload a local file into the directory currently being browsed.
+  async function upload() {
+    const sel = await open({
+      multiple: false,
+      directory: false,
+      filters: [GCODE_FILTER],
+    });
+    if (typeof sel !== "string") return;
+    uploading = true;
+    error = "";
+    try {
+      await invoke("upload_file", {
+        host: $connection.host,
+        dir: path,
+        localPath: sel,
+      });
+      refresh();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      uploading = false;
+    }
+  }
+
   $effect(() => {
     if (connected && entries.length === 0 && !loading && !error) {
       refresh();
@@ -110,6 +141,9 @@
   <header>
     <span>SD Files</span>
     <span class="path">{path}</span>
+    <button class="ghost sm" onclick={upload} disabled={!connected || uploading}>
+      {uploading ? "Uploading…" : "Upload…"}
+    </button>
     <button class="ghost sm" onclick={refresh} disabled={!connected || loading}>
       {loading ? "…" : "Refresh"}
     </button>
