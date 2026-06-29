@@ -261,7 +261,7 @@
   </div>
 
   {#if !tp || tp.segments.length === 0}
-    <div class="hint">Select a local G-code file to preview its toolpath.</div>
+    <div class="hint">Load a local or SD-card G-code file to preview its toolpath.</div>
   {:else}
     <div class="legend">
       <span class="feed">— cut</span>

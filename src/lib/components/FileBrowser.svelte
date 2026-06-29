@@ -2,12 +2,14 @@
   import { invoke } from "@tauri-apps/api/core";
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
-  import { actionPolicy } from "$lib/stores/maslow";
-  import { jobProgress, loadSdToolpath } from "$lib/stores/job";
+  import { loadSdToolpath } from "$lib/stores/job";
 
-  // Called after a successful preview so the parent (e.g. the SD modal) can
-  // close and reveal the toolpath underneath.
-  let { onpreview }: { onpreview?: () => void } = $props();
+  // Called after the operator picks an SD file: the parent (Job panel) records
+  // it as the loaded job and closes the modal. Running happens from the Job
+  // zone's single Start button, not from here, so the two job sources (local
+  // stream vs SD card) share one launch path.
+  let { onselect }: { onselect?: (f: { path: string; name: string }) => void } =
+    $props();
 
   interface SdEntry {
     name: string;
@@ -21,14 +23,6 @@
   let error = $state("");
 
   const connected = $derived($wsState === "connected");
-  const jobActive = $derived(
-    $jobProgress !== null &&
-      $jobProgress.state !== "done" &&
-      $jobProgress.state !== "error",
-  );
-  // Same gate as the local streamer: a firmware-side SD run cuts material, so it
-  // is allowed only when the machine is idle and Ready to Cut (belts tensioned).
-  const canRun = $derived(connected && !jobActive && ($actionPolicy?.run ?? false));
 
   function isDir(e: SdEntry): boolean {
     return e.isdir === true || String(e.size) === "-1";
@@ -93,23 +87,13 @@
     }
   }
 
-  function run(name: string) {
-    if (!canRun) return;
-    if (
-      !window.confirm(
-        `Run ${name} from the SD card? The router will move — make sure the bit, material and work zero are set.`,
-      )
-    )
-      return;
-    // Firmware-side run from SD (not the client streamer).
-    invoke("send_line", { line: `$SD/Run=${fullPath(name)}` });
-  }
-
-  async function preview(name: string) {
+  // Pick an SD file as the loaded job: parse its toolpath for preview and hand
+  // the path back to the Job panel. The actual run is launched there.
+  async function select(name: string) {
     error = "";
     try {
       await loadSdToolpath($connection.host, fullPath(name));
-      onpreview?.();
+      onselect?.({ path: fullPath(name), name });
     } catch (e) {
       error = String(e);
     }
@@ -148,15 +132,7 @@
         {/if}
         <span class="size">{humanSize(e)}</span>
         {#if !isDir(e)}
-          <button class="sm" onclick={() => preview(e.name)}>Preview</button>
-          <button
-            class="sm"
-            onclick={() => run(e.name)}
-            disabled={!canRun}
-            title={canRun
-              ? "Run this file from the SD card"
-              : "Machine must be idle and Ready to Cut"}>Run</button
-          >
+          <button class="sm primary" onclick={() => select(e.name)}>Select</button>
           <button class="sm danger" onclick={() => del(e.name)}>✕</button>
         {/if}
       </div>
@@ -263,6 +239,11 @@
   button.sm:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+  button.sm.primary {
+    border-color: #396cd8;
+    background: #396cd8;
+    color: #fff;
   }
   .ghost {
     background: transparent;

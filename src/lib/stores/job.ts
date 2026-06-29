@@ -70,6 +70,12 @@ export async function loadSdToolpath(host: string, path: string): Promise<void> 
   }
 }
 
+/** Drop the previewed toolpath (used when the operator unloads the job). */
+export function clearToolpath(): void {
+  toolpath.set(null);
+  toolpathPath.set(null);
+}
+
 let started = false;
 
 export async function initJobListeners(): Promise<void> {
