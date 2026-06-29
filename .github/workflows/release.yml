@@ -17,10 +17,43 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Desktop: macOS (Apple Silicon + Intel) and Windows. Creates the draft
-  # release that the Android job later uploads into.
+  # Create the draft release exactly once, up front. The desktop matrix and the
+  # Android job then upload into THIS release by id. Letting each matrix leg
+  # create its own release races (tauri-action can't see another leg's draft),
+  # which scatters platform artifacts across duplicate draft releases.
+  # ---------------------------------------------------------------------------
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - name: Create draft release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = process.env.GITHUB_REF_NAME;
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Maslow Desktop ${tag}`,
+              body: [
+                'Download the installer for your platform below.',
+                '',
+                'Tested firmware: FluidNC v1.21 to v1.22. Connecting to a Maslow outside that range still works, but the app shows an "untested firmware" warning and some behaviour may differ.',
+              ].join('\n'),
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  # ---------------------------------------------------------------------------
+  # Desktop: macOS (Apple Silicon + Intel) and Windows. Uploads into the draft
+  # release created above.
   # ---------------------------------------------------------------------------
   desktop:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -76,14 +109,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Maslow Desktop ${{ github.ref_name }}"
-          releaseBody: |
-            Download the installer for your platform below.
-
-            Tested firmware: FluidNC v1.21 to v1.22. Connecting to a Maslow outside that range still works, but the app shows an "untested firmware" warning and some behaviour may differ.
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
   # ---------------------------------------------------------------------------
