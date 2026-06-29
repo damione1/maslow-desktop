@@ -3,7 +3,8 @@
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { jobProgress } from "$lib/stores/job";
   import { connection } from "$lib/stores/connection";
-  import { actionPolicy, maslowConfig, refreshConfig } from "$lib/stores/maslow";
+  import { actionPolicy, fullConfig, refreshConfig } from "$lib/stores/maslow";
+  import { configNumber } from "$lib/stores/config";
   import Modal from "./Modal.svelte";
 
   // `touch` enlarges the jog pad + controls for shop-floor finger use on
@@ -140,7 +141,8 @@
   let err = $state("");
 
   const editable = $derived(connected && !jobActive);
-  const config = $derived($maslowConfig);
+  // The discovered config entries; values are read by firmware path.
+  const config = $derived($fullConfig);
   const host = $derived($connection.host);
 
   const cfgKey = $derived<CfgPopup | null>(
@@ -155,10 +157,9 @@
   }
 
   function initDraft(key: CfgPopup) {
-    const c = $maslowConfig;
-    if (!c) return;
+    if (!config) return;
     const d: Record<string, number> = {};
-    for (const f of POPUPS[key].fields) d[f.key] = c[f.key];
+    for (const f of POPUPS[key].fields) d[f.key] = configNumber(config, f.path, 0);
     draft = d;
   }
 
@@ -181,7 +182,9 @@
 
   const dirty = $derived.by(() => {
     if (!cfgKey || !config) return false;
-    return POPUPS[cfgKey].fields.some((f) => draft[f.key] !== config[f.key]);
+    return POPUPS[cfgKey].fields.some(
+      (f) => draft[f.key] !== configNumber(config, f.path, 0),
+    );
   });
   const anyInvalid = $derived.by(() => {
     if (!cfgKey) return false;
@@ -190,14 +193,12 @@
   const canSave = $derived(editable && !busy && dirty && !anyInvalid);
 
   async function save() {
-    if (!cfgKey) return;
-    const c = $maslowConfig;
-    if (!c) return;
+    if (!cfgKey || !config) return;
     busy = true;
     err = "";
     try {
       for (const f of POPUPS[cfgKey].fields) {
-        if (draft[f.key] !== c[f.key]) {
+        if (draft[f.key] !== configNumber(config, f.path, 0)) {
           await invoke("write_maslow_setting", { host, path: f.path, value: String(draft[f.key]) });
         }
       }
@@ -209,6 +210,13 @@
     } finally {
       busy = false;
     }
+  }
+
+  // Capture the live machine position into the Park draft. Park X/Y are machine
+  // coordinates; Z is a lift amount, so it is left untouched.
+  function parkFromCurrent() {
+    const m = $machineStatus?.mpos ?? [];
+    draft = { ...draft, park_x: m[0] ?? draft.park_x, park_y: m[1] ?? draft.park_y };
   }
 
   async function runCmd(cmd: string) {
@@ -224,17 +232,21 @@
     }
   }
 
+  // Prefill the home dialogs with the live work position so the inputs reflect
+  // where the machine actually is, not a fixed zero. The user can then keep that
+  // value (Set Home becomes a no-op offset) or edit it.
   function openSetXY() {
     menu = false;
     err = "";
-    homeX = 0;
-    homeY = 0;
+    const w = $machineStatus?.wpos ?? [];
+    homeX = w[0] ?? 0;
+    homeY = w[1] ?? 0;
     open = "setxy";
   }
   function openSetZ() {
     menu = false;
     err = "";
-    homeZ = 0;
+    homeZ = $machineStatus?.wpos?.[2] ?? 0;
     open = "setz";
   }
 </script>
@@ -272,7 +284,7 @@
       </div>
     </div>
     <label class="group">
-      <span class="lbl">Feed</span>
+      <span class="lbl">Jog speed</span>
       <input class="feed" type="number" min="1" bind:value={feed} />
     </label>
   </div>
@@ -312,7 +324,7 @@
   <!-- Feed-rate override: realtime, so it applies even mid-cut to slow or speed
        a running job without stopping it. -->
   <div class="row feedov">
-    <span class="lbl" title="Feed-rate override (live)">Feed {feedOverride}%</span>
+    <span class="lbl" title="Feed-rate override (live)">Speed override {feedOverride}%</span>
     <button onclick={feedDown} disabled={!connected} title="Feed −10% (0x92)">−</button>
     <button onclick={feedReset} disabled={!connected} title="Reset feed to 100% (0x90)">100%</button>
     <button onclick={feedUp} disabled={!connected} title="Feed +10% (0x91)">+</button>
@@ -346,6 +358,16 @@
     {#if err}<p class="perr">{err}</p>{/if}
     {#if !editable}<p class="pnote">Read-only — connect with no job running to edit.</p>{/if}
     <div class="actions">
+      {#if cfgKey === "park"}
+        <button
+          class="ghost mr-auto"
+          onclick={parkFromCurrent}
+          disabled={!editable || !config}
+          title="Fill Park X/Y from the current machine position"
+        >
+          Use current position
+        </button>
+      {/if}
       <button class="ghost" onclick={() => (open = null)}>Cancel</button>
       <button class="go" onclick={save} disabled={!canSave}>
         {busy ? "Saving…" : "Save"}
@@ -355,7 +377,8 @@
 {:else if open === "setxy"}
   <Modal title="Define home XY" onclose={() => (open = null)}>
     <p class="phint">
-      Sets the current position's work coordinates. Leave at 0 to zero XY here.
+      Sets the work coordinates for the current position. Pre-filled with the
+      live position; set to 0 to zero XY here.
     </p>
     <div class="fields">
       <label><span>X (mm)</span><input type="number" step="0.1" bind:value={homeX} /></label>
@@ -374,8 +397,8 @@
 {:else if open === "setz"}
   <Modal title="Define home Z" onclose={() => (open = null)}>
     <p class="phint">
-      Sets the current Z work coordinate. Leave at 0 to zero Z here (after
-      touching off on the stock).
+      Sets the work Z for the current position. Pre-filled with the live Z; set
+      to 0 to zero Z here (after touching off on the stock).
     </p>
     <div class="fields">
       <label><span>Z (mm)</span><input type="number" step="0.1" bind:value={homeZ} /></label>
@@ -613,6 +636,9 @@
   .actions button.go {
     background: #2e7d32;
     border-color: #2e7d32;
+  }
+  .actions .mr-auto {
+    margin-right: auto;
   }
 
   /* Touch mode (phone/tablet): jog pad sized for fingers — ~15mm targets per

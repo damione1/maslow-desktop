@@ -8,6 +8,7 @@
     refreshFullConfig,
     type ConfigEntry,
   } from "$lib/stores/maslow";
+  import { describe } from "$lib/stores/configDescriptors";
 
   const connected = $derived($wsState === "connected");
   const jobActive = $derived(
@@ -63,12 +64,6 @@
   function set(path: string, value: string) {
     draft = { ...draft, [path]: value };
   }
-
-  // Shorten the path for display: show the trailing segment, full path on hover.
-  const leaf = (path: string) => {
-    const i = path.lastIndexOf("/");
-    return i === -1 ? path : path.slice(i + 1);
-  };
 
   async function save() {
     const cfg = $fullConfig;
@@ -162,8 +157,9 @@
           <summary>{section} <span class="n">{entries.length}</span></summary>
           <div class="fields">
             {#each entries as e}
-              <label class="field" class:dirty={isDirty(e)} title={e.path}>
-                <span class="lab">{leaf(e.path)}</span>
+              {@const d = describe(e.path)}
+              <label class="field" class:dirty={isDirty(e)} title={d.help ?? e.path}>
+                <span class="lab">{d.label}{#if d.help}<abbr title={d.help}>ⓘ</abbr>{/if}</span>
                 {#if e.kind === "bool"}
                   <input
                     type="checkbox"
@@ -175,7 +171,9 @@
                 {:else}
                   <input
                     type={e.kind === "int" || e.kind === "float" ? "number" : "text"}
-                    step={e.kind === "float" ? "any" : e.kind === "int" ? "1" : undefined}
+                    step={d.step ?? (e.kind === "float" ? "any" : e.kind === "int" ? "1" : undefined)}
+                    min={d.min}
+                    max={d.max}
                     value={current(e)}
                     disabled={!editable}
                     oninput={(ev) => set(e.path, ev.currentTarget.value)}
@@ -309,6 +307,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .field .lab abbr {
+    cursor: help;
+    text-decoration: none;
+    opacity: 0.5;
+    margin-left: 0.25em;
   }
   .field.dirty .lab {
     color: #d8a657;

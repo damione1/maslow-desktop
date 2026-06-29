@@ -142,7 +142,7 @@ pub async fn send_realtime(state: State<'_, ConnState>, byte: u8) -> Result<(), 
 }
 
 /// Request a full config dump over the WS. The result arrives asynchronously as
-/// `config-dump` (+ derived `maslow-config`/`maslow-anchors`) events.
+/// `config-dump` (+ derived `maslow-anchors`) events.
 #[tauri::command]
 pub async fn request_config_dump(state: State<'_, ConnState>) -> Result<(), String> {
     send_cmd(&state, WsCommand::DumpConfig).await
@@ -801,8 +801,5 @@ fn finalize_config_dump(app: &AppHandle, yaml: &str) {
     let _ = app.emit("config-dump", &entries);
     if let Some(anchors) = maslow::parse_anchors(&synthetic) {
         let _ = app.emit("maslow-anchors", &anchors);
-    }
-    if let Some(cfg) = maslow::parse_maslow_config(&synthetic) {
-        let _ = app.emit("maslow-config", &cfg);
     }
 }
