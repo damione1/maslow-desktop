@@ -24,15 +24,46 @@
     invoke("send_line", { line: cmd });
   }
 
-  function zeroAll() {
-    if (!window.confirm("Zero all axes? Sets work X/Y/Z = 0 at the current position.")) return;
-    line("G10 L20 P0 X0 Y0 Z0");
+  // Zero X and Y only. The firmware keeps Z out of the bulk zero on purpose so the
+  // router-bit height isn't redefined by accident; Z is set deliberately via the
+  // per-axis Z set-home (touch-off).
+  function zeroXY() {
+    if (!window.confirm("Zero X and Y? Sets work X/Y = 0 at the current position. (Z is set separately.)"))
+      return;
+    line("G10 L20 P0 X0 Y0");
   }
   const homeAll = () => line("$H");
   const unlock = () => line("$X");
 
+  // Machine-Z safety envelope, mirroring the firmware's checkZHomeAndProceed.
+  const Z_MAX_SAFE = 72;
+  const Z_MIN_SAFE = 0;
+
   // Per-axis "Go to home": move that axis to its work zero. Confirmed (it moves).
+  // For Z, warn if the resulting machine Z would leave the safe range (a wrong Z
+  // home after an alarm/reset can drive the bit into the frame or the work).
   function goAxisHome(_i: number, axis: string) {
+    if (axis === "Z") {
+      const s = $machineStatus;
+      // After G90 G0 Z0 the machine returns to the work origin, i.e. machine Z = WCO_z.
+      const targetZ =
+        s?.wco?.[2] ??
+        (s?.mpos?.[2] != null && s?.wpos?.[2] != null ? s.mpos[2] - s.wpos[2] : null);
+      let msg = "Go to Z home? The machine will move Z to work zero.";
+      if (targetZ != null && (targetZ > Z_MAX_SAFE || targetZ < Z_MIN_SAFE)) {
+        const why =
+          targetZ > Z_MAX_SAFE
+            ? `above the safe limit (${Z_MAX_SAFE} mm)`
+            : `below the minimum (${Z_MIN_SAFE} mm)`;
+        msg =
+          `Warning: this moves Z to machine Z = ${targetZ.toFixed(1)} mm, ${why}. ` +
+          `That can indicate a wrong Z position after an alarm or reset, and may drive the ` +
+          `bit into the frame or the work. Proceed?`;
+      }
+      if (!window.confirm(msg)) return;
+      line("G90 G0 Z0");
+      return;
+    }
     if (!window.confirm(`Go to ${axis} home? The machine will move ${axis} to work zero.`)) return;
     line(`G90 G0 ${axis}0`);
   }
@@ -73,8 +104,8 @@
   <div class="cols">
     <div class="status-block">
       <div class="datum">
-        <Button variant="datum" size="lg" disabled={!canZero} title="Set work X/Y/Z = 0 at the current position" onclick={zeroAll}
-          >⌖ Zero all</Button
+        <Button variant="datum" size="lg" disabled={!canZero} title="Set work X/Y = 0 at the current position (Z is set separately)" onclick={zeroXY}
+          >⌖ Zero XY</Button
         >
         <Button variant="datum" size="lg" disabled={!canHome} title="Home all axes ($H)" onclick={homeAll}
           >⌂ Home all</Button
