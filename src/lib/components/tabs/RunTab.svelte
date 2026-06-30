@@ -166,12 +166,6 @@
 </script>
 
 <div class="run-tab" class:stacked>
-  {#if !stacked}
-    <div class="col list-col">
-      <GcodeList />
-    </div>
-  {/if}
-
   <div class="col control-col">
     {#if saved && !active && !loaded}
       <div class="resume-banner">
@@ -255,20 +249,15 @@
     />
   </div>
 
-  {#if stacked}
-    <details class="acc">
-      <summary>Toolpath preview</summary>
-      <div class="acc-body"><ToolpathView /></div>
-    </details>
-    <details class="acc">
-      <summary>G-code lines</summary>
-      <div class="acc-body list-stacked"><GcodeList /></div>
-    </details>
-  {:else}
-    <div class="viewport-col">
-      <ToolpathView />
-    </div>
-  {/if}
+  <div class="viewport-col">
+    <ToolpathView />
+  </div>
+
+  <!-- The textual move list is the nerdy bit: collapsed by default. -->
+  <details class="acc gcode">
+    <summary>G-code lines</summary>
+    <div class="acc-body list-stacked"><GcodeList /></div>
+  </details>
 </div>
 
 {#if showSd}
@@ -280,14 +269,17 @@
 <style>
   .run-tab {
     display: grid;
-    grid-template-columns: minmax(200px, 1fr) minmax(360px, 1.8fr) minmax(300px, 340px);
-    grid-template-areas: "list viewport control";
+    grid-template-columns: minmax(360px, 1.8fr) minmax(300px, 340px);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "viewport control"
+      "gcode gcode";
     gap: var(--gap-lg);
     padding: var(--gap-lg);
     height: 100%;
     min-height: 0;
   }
-  /* Tablet/phone: single column with collapsible toolpath + line list. */
+  /* Tablet/phone: single column. Toolpath stays visible; the line list collapses. */
   .run-tab.stacked {
     display: flex;
     flex-direction: column;
@@ -299,6 +291,7 @@
     overflow: visible;
   }
   .acc {
+    grid-area: gcode;
     background: var(--surface);
     border: 1px solid var(--border-2);
     border-radius: var(--radius-lg);
@@ -318,12 +311,6 @@
   }
   .acc-body.list-stacked {
     height: 320px;
-  }
-  .list-col {
-    grid-area: list;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
   }
   .viewport-col {
     grid-area: viewport;
@@ -417,21 +404,6 @@
     border: 1px solid var(--border-2);
     border-radius: var(--radius);
     padding: 0.3em 0.7em;
-  }
-
-  /* Medium widths: controls + viewport side by side, list full-width below. */
-  @media (max-width: 1180px) and (min-width: 861px) {
-    .run-tab {
-      grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
-      grid-template-areas:
-        "control viewport"
-        "list list";
-      height: auto;
-    }
-    .list-col {
-      height: 240px;
-      overflow: hidden;
-    }
   }
 
 </style>
