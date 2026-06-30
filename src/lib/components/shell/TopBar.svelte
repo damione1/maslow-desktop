@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { connection, fwVersion, connectWs, disconnectWs } from "$lib/stores/connection";
-  import { firmwareNotice } from "$lib/stores/firmware";
+  import { connection, connectWs, disconnectWs } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
   import { activeTab, type Tab } from "$lib/stores/ui";
 
@@ -62,12 +61,6 @@
   </div>
 
   <div class="right">
-    {#if $fwVersion}
-      <span class="fw" class:untested={$firmwareNotice} title={$firmwareNotice ?? "Maslow firmware version"}
-        >FW {$fwVersion}</span
-      >
-    {/if}
-
     <div class="conn-wrap">
       <button
         class="conn-chip"
@@ -130,16 +123,17 @@
   .tab {
     display: inline-flex;
     align-items: center;
-    gap: 0.45em;
+    gap: 0.4em;
     min-height: var(--tap);
-    padding: 0 1em;
+    padding: 0 0.9em;
     border: 1px solid transparent;
     border-radius: var(--radius);
     background: var(--surface-2);
     color: var(--text-dim);
     font-family: var(--font);
     font-weight: 600;
-    font-size: 1em;
+    font-size: 0.95em;
+    white-space: nowrap;
     cursor: pointer;
     transition:
       background 0.12s ease,
@@ -163,20 +157,6 @@
     align-items: center;
     gap: var(--gap-sm);
     margin-left: auto;
-  }
-  .fw {
-    font-size: 0.78em;
-    color: #9bb4d8;
-    background: #20304d;
-    padding: 0.25em 0.55em;
-    border-radius: var(--radius);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-  .fw.untested {
-    color: var(--warn);
-    background: #3a2a14;
-    border: 1px solid #6b4a1f;
   }
 
   .conn-wrap {
@@ -275,26 +255,29 @@
     cursor: not-allowed;
   }
 
-  /* Tablet/narrow: collapse tab + connection text to glyphs so the row fits a
-     portrait tablet width without overflowing (ABORT must stay reachable). */
+  /* Tablet/narrow: keep the tab NAMES (drop the glyph) and the connection chip
+     to a dot, so the named tabs fit a portrait tablet width. ABORT stays. */
   @media (max-width: 900px) {
-    .tab-label,
+    .glyph,
     .conn-label {
       display: none;
     }
     .tab {
       padding: 0 0.7em;
+      font-size: 0.9em;
     }
     .right {
       gap: 6px;
     }
   }
-  @media (max-width: 560px) {
-    .fw {
+  /* Very narrow (phone): fall back to glyph-only tabs to avoid overflow. */
+  @media (max-width: 520px) {
+    .glyph {
+      display: inline;
+    }
+    .tab-label {
       display: none;
     }
-  }
-  @media (max-width: 440px) {
     .abort-label {
       display: none;
     }

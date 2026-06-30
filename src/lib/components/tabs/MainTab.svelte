@@ -3,7 +3,6 @@
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { actionPolicy } from "$lib/stores/maslow";
   import { mainSubTab } from "$lib/stores/ui";
-  import StateBar from "$lib/components/ui/StateBar.svelte";
   import AxisTable from "$lib/components/ui/AxisTable.svelte";
   import SubTabs from "$lib/components/ui/SubTabs.svelte";
   import Button from "$lib/components/ui/Button.svelte";
@@ -100,7 +99,6 @@
 </script>
 
 <div class="main-tab">
-  <StateBar />
   <div class="cols">
     <div class="status-block">
       <div class="datum">

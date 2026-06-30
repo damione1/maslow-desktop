@@ -4,6 +4,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { actionPolicy } from "$lib/stores/maslow";
+  import { layout } from "$lib/stores/viewport";
   import {
     jobProgress,
     loadedJob,
@@ -54,6 +55,9 @@
   const canHold = $derived(connected && ($actionPolicy?.hold ?? false));
   const canResumeSd = $derived(connected && ($actionPolicy?.resume ?? false));
   const feedOv = $derived($machineStatus?.ov?.[0] ?? 100);
+  // On desktop the list + toolpath sit beside the controls; on tablet/phone they
+  // collapse into accordions (closed by default) so the controls aren't buried.
+  const stacked = $derived($layout !== "desktop");
 
   $effect(() => {
     if (!sdStarted) return;
@@ -161,10 +165,12 @@
   }
 </script>
 
-<div class="run-tab">
-  <div class="col list-col">
-    <GcodeList />
-  </div>
+<div class="run-tab" class:stacked>
+  {#if !stacked}
+    <div class="col list-col">
+      <GcodeList />
+    </div>
+  {/if}
 
   <div class="col control-col">
     {#if saved && !active && !loaded}
@@ -249,9 +255,20 @@
     />
   </div>
 
-  <div class="viewport-col">
-    <ToolpathView />
-  </div>
+  {#if stacked}
+    <details class="acc">
+      <summary>Toolpath preview</summary>
+      <div class="acc-body"><ToolpathView /></div>
+    </details>
+    <details class="acc">
+      <summary>G-code lines</summary>
+      <div class="acc-body list-stacked"><GcodeList /></div>
+    </details>
+  {:else}
+    <div class="viewport-col">
+      <ToolpathView />
+    </div>
+  {/if}
 </div>
 
 {#if showSd}
@@ -269,6 +286,38 @@
     padding: var(--gap-lg);
     height: 100%;
     min-height: 0;
+  }
+  /* Tablet/phone: single column with collapsible toolpath + line list. */
+  .run-tab.stacked {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    padding: var(--gap);
+    height: auto;
+  }
+  .run-tab.stacked .control-col {
+    overflow: visible;
+  }
+  .acc {
+    background: var(--surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg);
+    padding: var(--gap);
+  }
+  .acc > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.9em;
+    user-select: none;
+  }
+  .acc[open] > summary {
+    margin-bottom: var(--gap);
+  }
+  .acc-body.list-stacked {
+    height: 320px;
   }
   .list-col {
     grid-area: list;
@@ -385,23 +434,4 @@
     }
   }
 
-  /* Narrow/touch: single column stack, the tab scrolls. */
-  @media (max-width: 860px) {
-    .run-tab {
-      grid-template-columns: 1fr;
-      grid-template-areas:
-        "control"
-        "viewport"
-        "list";
-      height: auto;
-    }
-    .control-col,
-    .viewport-col {
-      overflow: visible;
-    }
-    .list-col {
-      height: 280px;
-      overflow: hidden;
-    }
-  }
 </style>

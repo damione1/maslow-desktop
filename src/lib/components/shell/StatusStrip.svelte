@@ -1,18 +1,31 @@
 <script lang="ts">
-  import { connection } from "$lib/stores/connection";
+  import { onMount } from "svelte";
+  import { connection, fwVersion } from "$lib/stores/connection";
   import { firmwareNotice } from "$lib/stores/firmware";
   import { machineStatus, wsState, stateClass } from "$lib/stores/machine";
 
   const connected = $derived($wsState === "connected");
   const s = $derived($machineStatus);
   const feedOv = $derived(s?.ov?.[0]);
+  const stateLabel = $derived(
+    s ? `${s.state}${s.substate !== null ? `:${s.substate}` : ""}` : connected ? "—" : "Offline",
+  );
+  const stateCls = $derived(s ? stateClass(s.state) : "other");
+
+  // App version (from tauri.conf.json) for the footer; best-effort.
+  let appVersion = $state<string | null>(null);
+  onMount(async () => {
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      appVersion = await getVersion();
+    } catch {
+      appVersion = null;
+    }
+  });
 </script>
 
 <div class="strip">
-  <span class="item state">
-    <span class="dot {s ? stateClass(s.state) : 'other'}"></span>
-    {s ? s.state : "—"}
-  </span>
+  <span class="state-pill {stateCls}">{stateLabel}</span>
 
   <span class="item">
     <span class="k">Conn</span>
@@ -31,6 +44,20 @@
     </span>
   {/if}
 
+  {#if $fwVersion}
+    <span class="item" title={$firmwareNotice ?? "Maslow firmware version"}>
+      <span class="k">FW</span>
+      <span class="v" class:warn={$firmwareNotice}>{$fwVersion}</span>
+    </span>
+  {/if}
+
+  {#if appVersion}
+    <span class="item">
+      <span class="k">App</span>
+      <span class="v">{appVersion}</span>
+    </span>
+  {/if}
+
   {#if $firmwareNotice}
     <span class="item notice" title={$firmwareNotice}>⚠ Firmware untested</span>
   {/if}
@@ -40,7 +67,7 @@
   .strip {
     display: flex;
     align-items: center;
-    gap: var(--gap-lg);
+    gap: var(--gap);
     padding: 4px 12px;
     min-height: 30px;
     background: var(--bar);
@@ -68,26 +95,29 @@
   .v.ok {
     color: #3ddc84;
   }
-  .state {
-    font-weight: 600;
-    color: var(--text);
+  .v.warn {
+    color: var(--warn);
   }
-  .dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
+  /* Prominent machine-state pill — the at-a-glance state indicator now that the
+     full-width bar is gone from MAIN. */
+  .state-pill {
+    font-weight: 700;
+    font-size: 0.95em;
+    padding: 0.15em 0.7em;
+    border-radius: var(--radius);
+    color: #fff;
     background: var(--state-other);
   }
-  .dot.idle {
+  .state-pill.idle {
     background: var(--state-idle);
   }
-  .dot.run {
+  .state-pill.run {
     background: var(--state-run);
   }
-  .dot.hold {
+  .state-pill.hold {
     background: var(--state-hold);
   }
-  .dot.alarm {
+  .state-pill.alarm {
     background: var(--state-alarm);
   }
   .notice {
