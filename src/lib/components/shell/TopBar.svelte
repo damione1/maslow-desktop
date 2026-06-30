@@ -17,13 +17,26 @@
 
   let host = $state($connection.host);
   let connOpen = $state(false);
+  let connecting = $state(false);
 
   async function connect() {
+    connecting = true;
     await connectWs(host);
+    // On failure connectWs sets an error; keep the popover open to show it.
+    if ($connection.error) connecting = false;
   }
   async function disconnect() {
     await disconnectWs();
   }
+
+  // The websocket reaches "connected" asynchronously (via the ws-state event), so
+  // close the popover once the connection actually comes up after a connect click.
+  $effect(() => {
+    if (connecting && connected) {
+      connOpen = false;
+      connecting = false;
+    }
+  });
 
   // 0x18 = Ctrl-X soft reset: the universal mid-cut kill. Always reachable from
   // the chrome, never gated behind a tab.
