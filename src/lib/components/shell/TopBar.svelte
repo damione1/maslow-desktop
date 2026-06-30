@@ -275,8 +275,9 @@
     cursor: not-allowed;
   }
 
-  /* Narrow viewports: collapse tab + ABORT text to glyphs only. */
-  @media (max-width: 720px) {
+  /* Tablet/narrow: collapse tab + connection text to glyphs so the row fits a
+     portrait tablet width without overflowing (ABORT must stay reachable). */
+  @media (max-width: 900px) {
     .tab-label,
     .conn-label {
       display: none;
@@ -284,12 +285,17 @@
     .tab {
       padding: 0 0.7em;
     }
+    .right {
+      gap: 6px;
+    }
   }
-  @media (max-width: 480px) {
-    .abort-label {
+  @media (max-width: 560px) {
+    .fw {
       display: none;
     }
-    .fw {
+  }
+  @media (max-width: 440px) {
+    .abort-label {
       display: none;
     }
   }

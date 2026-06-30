@@ -69,13 +69,13 @@
    (set from the viewport store) and as a coarse-pointer fallback. */
 :root[data-touch="1"],
 :root.touch {
-  --tap: 56px;
-  --tap-lg: 88px;
+  --tap: 54px;
+  --tap-lg: 72px;
 }
 
 @media (pointer: coarse) {
   :root {
-    --tap: 56px;
-    --tap-lg: 88px;
+    --tap: 54px;
+    --tap-lg: 72px;
   }
 }

@@ -104,10 +104,10 @@
   <div class="cols">
     <div class="status-block">
       <div class="datum">
-        <Button variant="datum" size="lg" disabled={!canZero} title="Set work X/Y = 0 at the current position (Z is set separately)" onclick={zeroXY}
+        <Button variant="datum" disabled={!canZero} title="Set work X/Y = 0 at the current position (Z is set separately)" onclick={zeroXY}
           >⌖ Zero XY</Button
         >
-        <Button variant="datum" size="lg" disabled={!canHome} title="Home all axes ($H)" onclick={homeAll}
+        <Button variant="datum" disabled={!canHome} title="Home all axes ($H)" onclick={homeAll}
           >⌂ Home all</Button
         >
         <Button variant="ghost" disabled={!canUnlock} title="Clear alarm lock ($X)" onclick={unlock}
@@ -193,7 +193,7 @@
     background: var(--surface);
     border: 1px solid var(--border-2);
     border-radius: var(--radius-lg);
-    padding: var(--gap-lg);
+    padding: var(--gap);
     min-height: 0;
   }
   .mdi {
@@ -252,10 +252,21 @@
     gap: var(--gap-sm);
   }
 
-  /* Single column on narrow/touch viewports: status block on top, controls below. */
+  /* Single column on narrow/touch viewports: status block on top, controls below.
+     Tighten spacing so the whole tab fits a portrait tablet without scrolling. */
   @media (max-width: 860px) {
     .cols {
       grid-template-columns: 1fr;
+    }
+    .main-tab {
+      gap: var(--gap-sm);
+      padding: var(--gap);
+    }
+    .status-block {
+      gap: var(--gap-sm);
+    }
+    .sub {
+      gap: var(--gap-sm);
     }
   }
 </style>

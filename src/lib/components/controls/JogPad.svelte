@@ -97,11 +97,11 @@
   .jogpad {
     display: flex;
     flex-direction: column;
-    gap: var(--gap-lg);
+    gap: var(--gap);
   }
   .pads {
     display: flex;
-    gap: var(--gap-lg);
+    gap: var(--gap);
     justify-content: center;
     flex-wrap: wrap;
   }
@@ -153,12 +153,12 @@
   .selectors {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--gap-lg);
+    gap: var(--gap);
   }
   .sel {
     display: flex;
     flex-direction: column;
-    gap: var(--gap-sm);
+    gap: 4px;
   }
   .lbl {
     font-size: 0.8em;

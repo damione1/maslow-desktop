@@ -77,11 +77,17 @@
   .head,
   .row {
     display: grid;
-    grid-template-columns: 56px 1fr 1fr auto;
+    grid-template-columns: 44px 1fr 1fr auto;
     align-items: center;
     gap: var(--gap-sm);
     background: var(--surface);
-    padding: 0.35em 0.6em;
+    padding: 0.25em 0.6em;
+  }
+  /* Slightly smaller inline buttons keep the DRO rows compact on touch. */
+  .acts :global(.icon-btn) {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
   }
   .axis-table.compact .head,
   .axis-table.compact .row {
@@ -104,11 +110,11 @@
     text-align: right;
   }
   .work {
-    font-size: 1.4em;
+    font-size: 1.25em;
     font-weight: 600;
   }
   .axis-table.compact .work {
-    font-size: 1.1em;
+    font-size: 1.05em;
   }
   .machine {
     font-size: 0.95em;
