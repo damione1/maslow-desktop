@@ -16,8 +16,6 @@
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import ProgressBar from "$lib/components/ui/ProgressBar.svelte";
-  import Stat from "$lib/components/ui/Stat.svelte";
-  import AxisTable from "$lib/components/ui/AxisTable.svelte";
   import OverrideControl from "$lib/components/ui/OverrideControl.svelte";
   import GcodeList from "$lib/components/controls/GcodeList.svelte";
   import ToolpathView from "$lib/components/ToolpathView.svelte";
@@ -197,6 +195,11 @@
         max={job.total}
         variant={job.state === "error" ? "warn" : job.state === "running" ? "active" : "warn"}
       />
+      <div class="meta">
+        <span>{job.acked}/{job.total} lines</span>
+        <span>{percent}%</span>
+        {#if job.errors > 0}<span class="err">{job.errors} err</span>{/if}
+      </div>
       <div class="controls">
         {#if job.state === "running"}
           <Button variant="datum" disabled={!connected} onclick={pause}>⏸ Pause</Button>
@@ -229,16 +232,6 @@
       <p class="gate-hint">Machine is in <strong>Alarm</strong> after reconnecting — home or unlock it, then resume.</p>
     {/if}
 
-    <div class="info">
-      <Stat label="File" value={loaded?.name ?? job?.name ?? "—"} />
-      <Stat label="Total lines" value={job?.total ?? "—"} />
-      <Stat label="Progress" value="{percent}%" />
-      <Stat label="Lines sent" value={job ? `${job.sent}` : "—"} />
-      <Stat label="Acked" value={job ? `${job.acked}` : "—"} />
-      <Stat label="Errors" value={job?.errors ?? 0} />
-    </div>
-
-    <AxisTable compact />
     <OverrideControl
       label="Feed override"
       value={feedOv}
@@ -399,11 +392,17 @@
   .gate-hint strong {
     color: #ffd166;
   }
-  .info {
-    background: var(--surface);
-    border: 1px solid var(--border-2);
-    border-radius: var(--radius);
-    padding: 0.3em 0.7em;
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85em;
+    color: var(--text-dim);
+  }
+  .meta .err {
+    color: #ff6b6b;
   }
 
 </style>
