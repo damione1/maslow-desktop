@@ -37,19 +37,26 @@
     line(`G90 G0 ${axis}0`);
   }
 
-  // Per-axis "Set home": open a dialog prefilled with the live work value for that
-  // axis so the operator sees exactly what will be defined, then confirms. Set to
-  // 0 to zero the axis here, or to any value for a touch-off.
-  let axisSet = $state<{ axis: string; index: number; value: number } | null>(null);
+  // Per-axis "Set home": open a dialog showing the current position and a value to
+  // define for it. Defaults to 0 (zero this axis here) so confirming visibly sets
+  // something; can be edited to any value for a touch-off.
+  let axisSet = $state<{ axis: string; index: number } | null>(null);
+  let axisValue = $state(0);
   function openAxisSet(i: number, axis: string) {
-    const w = $machineStatus?.wpos ?? [];
-    axisSet = { axis, index: i, value: w[i] ?? 0 };
+    axisSet = { axis, index: i };
+    axisValue = 0;
   }
   function applyAxisSet() {
     if (!axisSet) return;
-    line(`G10 L20 P0 ${axisSet.axis}${axisSet.value}`);
+    line(`G10 L20 P0 ${axisSet.axis}${axisValue}`);
     axisSet = null;
   }
+  const axisWork = $derived.by(() => {
+    if (!axisSet) return "—";
+    const s = $machineStatus;
+    const arr = s ? (s.wpos.length ? s.wpos : s.mpos) : [];
+    return arr[axisSet.index]?.toFixed(3) ?? "—";
+  });
   const axisMachine = $derived(
     axisSet ? ($machineStatus?.mpos?.[axisSet.index]?.toFixed(3) ?? "—") : "—",
   );
@@ -97,14 +104,17 @@
 {#if axisSet}
   <Modal title="Set {axisSet.axis} home" onclose={() => (axisSet = null)}>
     <p class="hint">
-      Defines the work <strong>{axisSet.axis}</strong> value for the current position (machine
-      {axisSet.axis} = {axisMachine}). The field shows the current work {axisSet.axis}; set it to
-      <strong>0</strong> to zero the axis here, or to any value for a touch-off.
+      Defines the work <strong>{axisSet.axis}</strong> for the current position. Leave it at
+      <strong>0</strong> to zero the axis here, or enter a value for a touch-off.
     </p>
+    <div class="current">
+      <span>Current {axisSet.axis}</span>
+      <span class="vals">work <strong>{axisWork}</strong> · machine {axisMachine}</span>
+    </div>
     <div class="fields">
       <label>
-        <span>Work {axisSet.axis} (mm)</span>
-        <input type="number" step="0.1" bind:value={axisSet.value} />
+        <span>Set work {axisSet.axis} to (mm)</span>
+        <input type="number" step="0.1" bind:value={axisValue} />
       </label>
     </div>
     <div class="actions">
@@ -164,6 +174,24 @@
     font-size: 0.85em;
     color: var(--text-dim);
     line-height: 1.4;
+  }
+  .current {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8em;
+    padding: 0.5em 0.7em;
+    margin-bottom: 0.8em;
+    background: var(--surface-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
+    font-size: 0.85em;
+    color: var(--text-dim);
+  }
+  .current .vals {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
   }
   .fields {
     display: flex;
