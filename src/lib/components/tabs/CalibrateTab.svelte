@@ -10,31 +10,19 @@
   const showSolver = $derived($measurements.length > 0);
 </script>
 
+<!-- Each component owns its own card; no extra wrapper boxes. The wizard is the
+     primary path, manual belt control is collapsed (also on Main → Belts), and the
+     map/solver appear only when a run produces data. -->
 <div class="cal-tab">
-  <section class="card">
-    <h3>Guided calibration</h3>
-    <CalibrationWizard />
-  </section>
+  <CalibrationWizard />
 
-  <!-- The wizard is the primary path; manual belt control is collapsed by default
-       (it's also on Main → Belts). -->
-  <details class="card acc">
+  <details class="belts-acc">
     <summary>Belts — manual control</summary>
-    <div class="acc-body"><BeltControls /></div>
+    <div class="belts-body"><BeltControls /></div>
   </details>
 
-  {#if showMap}
-    <details class="card acc" open>
-      <summary>Waypoint map</summary>
-      <div class="acc-body"><CalibrationView /></div>
-    </details>
-  {/if}
-  {#if showSolver}
-    <details class="card acc" open>
-      <summary>Anchor solver</summary>
-      <div class="acc-body"><CalibrationSolver /></div>
-    </details>
-  {/if}
+  {#if showMap}<CalibrationView />{/if}
+  {#if showSolver}<CalibrationSolver />{/if}
 </div>
 
 <style>
@@ -44,23 +32,14 @@
     gap: var(--gap);
     padding: var(--gap);
   }
-  .card {
+  /* The belt controls have no card of their own, so the accordion provides it. */
+  .belts-acc {
     background: var(--surface);
     border: 1px solid var(--border-2);
     border-radius: var(--radius-lg);
-    padding: var(--gap-lg);
-  }
-  h3 {
-    margin: 0 0 var(--gap) 0;
-    font-size: 0.9em;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-dim);
-  }
-  .acc {
     padding: var(--gap);
   }
-  .acc > summary {
+  .belts-acc > summary {
     cursor: pointer;
     color: var(--text-dim);
     font-size: 0.9em;
@@ -68,7 +47,7 @@
     letter-spacing: 0.04em;
     user-select: none;
   }
-  .acc[open] > summary {
+  .belts-acc[open] > summary {
     margin-bottom: var(--gap);
   }
 </style>
