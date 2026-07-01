@@ -11,22 +11,28 @@ A friendly control panel for the [Maslow CNC](https://www.maslowcnc.com/) runnin
 
 It connects to your machine over the network and covers almost everything the built-in FluidNC web UI does, with two things it does better: it **respects the Maslow calibration state machine** so you can't push the machine into an invalid or stuck state, and it wraps calibration in a **plain-language guided wizard**.
 
-![Toolpath preview on desktop](img/desktop-toolpath.png)
+![Run tab with live toolpath preview](img/run-toolpath.png)
 
 ## Why another control panel?
 
 - **State-machine aware.** Every action is gated against the firmware's allowed transitions (retract → extend → take slack → calibrate → ready to cut). No more wondering why the machine is stuck in an unknown state after a mis-step.
 - **Guided calibration wizard.** Each step is explained in everyday language, advances automatically as the firmware reports progress, and offers a one-tap daily resume (just re-apply tension) plus release tension so the belts and frame can rest overnight.
-- **One responsive app.** A real desktop build (macOS / Windows / Linux) and a touch-first layout for a tablet or phone mounted next to the machine, with manual control as the landing screen.
+- **One touch-first layout, everywhere.** A single responsive interface built for a shop-floor controller: big finger-friendly buttons, a persistent top tab bar, an always-reachable red **ABORT**, and a machine-state footer. It scales from a portrait tablet mounted next to the machine up to a desktop window, with no separate "mobile" and "desktop" modes to maintain.
 - **Almost the whole FluidNC web UI, re-implemented.** Jogging, jobs, SD card, settings and a raw console, with UX improvements layered on top (the guided wizard being the headline).
 
-## Screenshots
+## Layout
 
-| Manual control | Job & toolpath | Calibration | Settings |
-| --- | --- | --- | --- |
-| ![Manual control](img/mobile-control.png) | ![Job](img/mobile-job.png) | ![Setup](img/mobile-setup.png) | ![Settings](img/mobile-settings.png) |
+Five top-level tabs, an always-visible ABORT, and a status footer (connection, units, live feed override, firmware/app version). A strict color grammar runs throughout: **blue** = action, **orange** = datum (zero/home), **green** = active/running, **red** = abort/stop.
 
-![Calibration on desktop](img/desktop-calibrate.png)
+- **Main** — machine state, big Zero XY / Home all / Unlock, a per-axis DRO (work + machine position with inline set-home / go-to-home), and Jog / Belts / MDI sub-tabs.
+- **Run** — load a local or SD-card job, big Start / Pause / Cancel, feed override, and an always-visible toolpath preview (the raw G-code line list tucks into a collapsible drawer).
+- **Calibrate** — the guided wizard, with manual belt control and the waypoint map / anchor solver alongside.
+- **Files** — browse, upload and load G-code from the machine's SD card.
+- **Config** — Maslow and FluidNC settings.
+
+| Main — jog & DRO | Run — toolpath | Calibrate — guided wizard |
+| --- | --- | --- |
+| ![Main tab](img/main-jog.png) | ![Run tab](img/run-toolpath.png) | ![Calibrate tab](img/calibrate-wizard.png) |
 
 ## Download
 
