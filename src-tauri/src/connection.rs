@@ -624,6 +624,11 @@ struct SocketCtx {
     /// stray poll ack landing right as a job starts can never be miscounted as a
     /// streamed-line ack and drift the char-counting cursor.
     pending_acks: usize,
+    /// Set once `maslow-cal-complete` has been emitted for the calibration run
+    /// currently ending, so the "Find Anchors complete" log line (which always
+    /// follows the state-transition report on the wire) does not re-fire it.
+    /// Cleared as soon as any other state observation lands.
+    cal_complete_emitted: bool,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -647,6 +652,16 @@ fn emit_discord(app: &AppHandle, kind: &'static str, from: maslow::CalState, to:
             to_label: to.label().to_string(),
         },
     );
+}
+
+/// Emit `maslow-cal-complete` once per calibration run, whichever path (the
+/// state transition or the corroborating log line) gets there first.
+fn emit_cal_complete(app: &AppHandle, ctx: &mut SocketCtx) {
+    if ctx.cal_complete_emitted {
+        return;
+    }
+    ctx.cal_complete_emitted = true;
+    let _ = app.emit("maslow-cal-complete", ());
 }
 
 /// Recompute the unified action policy and emit it only when it changed.
@@ -719,15 +734,29 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
     if let Some(state) = maslow::parse_state(line) {
         let state = maslow::CalState::from_code(state);
         match ctx.tracker.observe(state, STATE_DEBOUNCE_MS) {
-            maslow::Observation::First(s) | maslow::Observation::Valid(s) => {
+            maslow::Observation::First(s) => {
+                ctx.cal_complete_emitted = false;
                 let _ = app.emit("maslow-state", maslow::policy_for(s));
                 refresh_policy(app, ctx, job_active);
+            }
+            maslow::Observation::Valid { from, to } => {
+                let _ = app.emit("maslow-state", maslow::policy_for(to));
+                refresh_policy(app, ctx, job_active);
+                if maslow::is_calibration_completion(from, to) {
+                    emit_cal_complete(app, ctx);
+                } else {
+                    // Any other transition means we've moved on from the last
+                    // completed (or completing) run, so a future 6->7/9->7 can
+                    // fire again.
+                    ctx.cal_complete_emitted = false;
+                }
             }
             maslow::Observation::Unchanged => {}
             maslow::Observation::Straggler { from, to } => {
                 emit_discord(app, "straggler", from, to);
             }
             maslow::Observation::Discord { from, to } => {
+                ctx.cal_complete_emitted = false;
                 emit_discord(app, "accepted", from, to);
                 let _ = app.emit("maslow-state", maslow::policy_for(to));
                 refresh_policy(app, ctx, job_active);
@@ -753,8 +782,14 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         let _ = app.emit("cal-firmware-anchors", anchors);
         // fall through so the result also appears in the console
     }
-    if line.contains("Calibration complete") {
-        let _ = app.emit("maslow-cal-complete", ());
+    if line.contains("Find Anchors complete") {
+        // Belt-and-suspenders: the state-transition path above is authoritative
+        // and already emits on 6->7 / 9->7. This log line follows that state
+        // report on the wire (requestStateChange prints the new state, then
+        // Calibration.cpp logs this message), so skip it if already handled to
+        // avoid double-firing the toast; only emit here as a fallback if the
+        // transition was, for whatever reason, not observed.
+        emit_cal_complete(app, ctx);
         // fall through so the message also appears in the console
     }
     if is_control(line) {
