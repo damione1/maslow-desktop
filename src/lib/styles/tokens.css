@@ -1,0 +1,81 @@
+/* Design tokens for the touch-first controller UI. Formalizes the prior
+   de-facto dark palette into CSS custom properties so the whole app reads from
+   one source. Imported once in +layout.svelte. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  /* Surfaces */
+  --bg: #1a1a1a;
+  --surface: #161616;
+  --surface-2: #1f1f1f;
+  --surface-3: #2b2b2b;
+  --inset: #0e0e0e;
+  --bar: #222;
+
+  /* Borders */
+  --border: #2a2a2a;
+  --border-2: #333;
+  --border-3: #444;
+
+  /* Text */
+  --text: #f0f0f0;
+  --text-dim: #aaa;
+  --text-mute: #888;
+
+  /* Action color grammar */
+  --action: #2c5f9e;
+  --action-hover: #356fb8;
+  --action-text: #fff;
+  --datum: #f0a030;
+  --datum-hover: #f5b34d;
+  --datum-text: #1a1a1a;
+  --active: #2e9d5b;
+  --active-hover: #37b569;
+  --active-text: #fff;
+  --danger: #c62828;
+  --danger-hover: #d83838;
+  --danger-text: #fff;
+  --warn: #e0a83d;
+  --ghost-bg: #2b2b2b;
+  --ghost-hover: #353535;
+
+  /* Machine-state pill/bar colors */
+  --state-idle: #2e7d32;
+  --state-run: #1565c0;
+  --state-hold: #b8860b;
+  --state-alarm: #c62828;
+  --state-other: #444;
+
+  /* Sizing */
+  --tap: 48px;
+  --tap-lg: 76px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --gap-sm: 8px;
+  --gap: 12px;
+  --gap-lg: 16px;
+
+  /* Typography */
+  --font: Inter, Avenir, Helvetica, Arial, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+/* Touch viewports get larger hit targets. Toggled via data-touch on <html>
+   (set from the viewport store) and as a coarse-pointer fallback. */
+:root[data-touch="1"],
+:root.touch {
+  --tap: 54px;
+  --tap-lg: 72px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --tap: 54px;
+    --tap-lg: 72px;
+  }
+}

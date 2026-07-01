@@ -185,55 +185,68 @@
 
 <style>
   .files {
-    background: #161616;
-    border: 1px solid #333;
-    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg);
     padding: 0.7em 0.9em;
     display: flex;
     flex-direction: column;
-    gap: 0.5em;
+    gap: 0.6em;
+    min-height: 0;
+    height: 100%;
   }
   header {
     display: flex;
     align-items: center;
     gap: 0.7em;
-    font-size: 0.85em;
-    opacity: 0.85;
+    font-size: 0.95em;
+    color: var(--text-dim);
+    flex: 0 0 auto;
   }
   .path {
     flex: 1;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.8em;
-    opacity: 0.6;
+    font-family: var(--mono);
+    font-size: 0.85em;
+    color: var(--text-mute);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .error {
-    font-size: 0.8em;
+    font-size: 0.85em;
     color: #ff6b6b;
+    flex: 0 0 auto;
   }
   .list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    max-height: 220px;
+    gap: 4px;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
   }
   .entry {
     display: flex;
     align-items: center;
-    gap: 0.6em;
-    padding: 0.3em 0.4em;
-    border-radius: 6px;
-    font-size: 0.85em;
+    gap: 0.7em;
+    min-height: var(--tap);
+    padding: 0.4em 0.7em;
+    border-radius: var(--radius);
+    font-size: 1em;
+    background: var(--surface-2);
   }
   .entry:hover {
-    background: #1f1f1f;
+    background: var(--surface-3);
   }
   .entry.up {
     border: none;
-    background: transparent;
-    color: #aaa;
+    background: var(--surface-2);
+    color: var(--text-dim);
     text-align: left;
     cursor: pointer;
+    min-height: var(--tap);
+    padding: 0.4em 0.7em;
+    border-radius: var(--radius);
   }
   .name {
     flex: 1;
@@ -253,45 +266,54 @@
     color: #7fb2ff;
   }
   .size {
-    font-size: 0.78em;
-    opacity: 0.55;
+    font-size: 0.85em;
+    color: var(--text-mute);
     font-variant-numeric: tabular-nums;
-    min-width: 56px;
+    min-width: 64px;
     text-align: right;
   }
   .empty {
-    font-size: 0.8em;
-    opacity: 0.5;
-    padding: 0.4em;
+    font-size: 0.9em;
+    color: var(--text-mute);
+    padding: 0.6em;
   }
   button.sm {
-    padding: 0.2em 0.6em;
-    border-radius: 6px;
-    border: 1px solid #444;
-    background: #2b2b2b;
-    color: #ddd;
+    min-height: calc(var(--tap) - 8px);
+    padding: 0 0.9em;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-3);
+    background: var(--surface-3);
+    color: var(--text);
     cursor: pointer;
-    font-size: 0.78em;
+    font-size: 0.9em;
+    font-weight: 600;
   }
   button.sm:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
   button.sm.primary {
-    border-color: #396cd8;
-    background: #396cd8;
+    border-color: var(--action);
+    background: var(--action);
     color: #fff;
   }
   .ghost {
+    min-height: calc(var(--tap) - 8px);
+    padding: 0 0.9em;
     background: transparent;
-    border: 1px solid #555;
-    color: #ddd;
-    border-radius: 7px;
+    border: 1px solid var(--border-3);
+    color: var(--text);
+    border-radius: var(--radius);
     cursor: pointer;
+    font-size: 0.9em;
+  }
+  .ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   .danger {
-    background: #6e2525;
-    border-color: #6e2525;
+    background: var(--danger);
+    border-color: var(--danger);
     color: #fff;
   }
 </style>

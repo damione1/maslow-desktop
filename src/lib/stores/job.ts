@@ -24,6 +24,15 @@ export interface SavedJob {
 /** Live streaming progress, or null when no job is loaded. */
 export const jobProgress = writable<JobProgress | null>(null);
 
+/** The job selected to run (local stream or SD card), shared between the Files
+ * tab (which loads it) and the Run tab (which starts it). One source at a time. */
+export interface LoadedJob {
+  source: "local" | "sd";
+  path: string;
+  name: string;
+}
+export const loadedJob = writable<LoadedJob | null>(null);
+
 export interface ToolpathSegment {
   x0: number;
   y0: number;

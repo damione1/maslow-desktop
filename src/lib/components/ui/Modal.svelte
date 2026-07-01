@@ -1,12 +1,15 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  interface Props {
+  let {
+    title,
+    onclose,
+    children,
+  }: {
     title: string;
     onclose: () => void;
     children: Snippet;
-  }
-  let { title, onclose, children }: Props = $props();
+  } = $props();
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === "Escape") onclose();
@@ -15,7 +18,6 @@
 
 <svelte:window {onkeydown} />
 
-<!-- Backdrop is a button so click/keyboard dismissal stays accessible. -->
 <button class="backdrop" onclick={onclose} aria-label="Close dialog"></button>
 <div class="card" role="dialog" aria-modal="true" aria-label={title}>
   <header>
@@ -44,12 +46,12 @@
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 51;
-    width: min(420px, calc(100vw - 2em));
+    width: min(440px, calc(100vw - 2em));
     max-height: calc(100vh - 2em);
     overflow: auto;
-    background: #1c1c1c;
-    border: 1px solid #3a3a3a;
-    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border-3);
+    border-radius: var(--radius-lg);
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   }
   header {
@@ -57,20 +59,20 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.7em 0.9em;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid var(--border);
     font-weight: 600;
   }
   .x {
     background: transparent;
     border: none;
-    color: #aaa;
+    color: var(--text-dim);
     font-size: 1em;
     cursor: pointer;
     padding: 0.2em 0.4em;
-    border-radius: 6px;
+    border-radius: var(--radius);
   }
   .x:hover {
-    background: #2a2a2a;
+    background: var(--border);
     color: #fff;
   }
   .body {
