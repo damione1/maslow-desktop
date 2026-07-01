@@ -214,6 +214,16 @@ pub fn valid_transition(from: CalState, to: CalState) -> bool {
     }
 }
 
+/// True when a `from -> to` transition represents the completion of a
+/// calibration run: entering READY_TO_CUT out of the calibration solve path
+/// (CALIBRATION_IN_PROGRESS or CALIBRATION_COMPUTING). A daily apply-tension
+/// cycle also ends at READY_TO_CUT but comes from TAKING_SLACK, so it must NOT
+/// be reported as a completion here.
+pub fn is_calibration_completion(from: CalState, to: CalState) -> bool {
+    use CalState::*;
+    to == ReadyToCut && matches!(from, CalibrationInProgress | CalibrationComputing)
+}
+
 /// Outcome of observing a reported state through the tracker.
 #[derive(Debug, PartialEq)]
 pub enum Observation {
@@ -222,7 +232,7 @@ pub enum Observation {
     /// Same as the current state; nothing to do.
     Unchanged,
     /// A legitimate transition; state updated.
-    Valid(CalState),
+    Valid { from: CalState, to: CalState },
     /// Invalid transition arriving within the debounce window — treated as a
     /// late straggler and ignored (state NOT updated).
     Straggler { from: CalState, to: CalState },
@@ -265,7 +275,7 @@ impl StateTracker {
                 if valid_transition(cur, to) {
                     self.current = Some(to);
                     self.last_change = Instant::now();
-                    Observation::Valid(to)
+                    Observation::Valid { from: cur, to }
                 } else if (self.last_change.elapsed().as_millis() as u64) < debounce_ms {
                     Observation::Straggler { from: cur, to }
                 } else {
@@ -603,7 +613,10 @@ mod tests {
         let mut t = StateTracker::default();
         assert_eq!(t.observe(Retracted, 0), Observation::First(Retracted));
         assert_eq!(t.observe(Retracted, 0), Observation::Unchanged);
-        assert_eq!(t.observe(Extending, 0), Observation::Valid(Extending));
+        assert_eq!(
+            t.observe(Extending, 0),
+            Observation::Valid { from: Retracted, to: Extending }
+        );
         assert_eq!(t.current(), Some(Extending));
     }
 
@@ -624,6 +637,62 @@ mod tests {
             Observation::Discord { from: Retracted, to: ExtendedOut }
         );
         assert_eq!(t.current(), Some(ExtendedOut));
+    }
+
+    #[test]
+    fn calibration_completion_from_in_progress_or_computing() {
+        use CalState::*;
+        // 6->7 and 9->7: the two firmware paths into READY_TO_CUT that end an
+        // actual calibration run.
+        assert!(is_calibration_completion(CalibrationInProgress, ReadyToCut));
+        assert!(is_calibration_completion(CalibrationComputing, ReadyToCut));
+    }
+
+    #[test]
+    fn calibration_completion_excludes_apply_tension() {
+        use CalState::*;
+        // 5->7: daily apply-tension cycle, not a calibration completion.
+        assert!(!is_calibration_completion(TakingSlack, ReadyToCut));
+    }
+
+    #[test]
+    fn calibration_completion_excludes_non_ready_targets() {
+        use CalState::*;
+        assert!(!is_calibration_completion(CalibrationInProgress, CalibrationComputing));
+        assert!(!is_calibration_completion(ReadyToCut, ReadyToCut));
+    }
+
+    #[test]
+    fn tracker_reports_completion_transitions_not_unchanged_or_apply_tension() {
+        use CalState::*;
+        // 6->7: calibration completion.
+        let mut t = StateTracker::default();
+        t.observe(CalibrationInProgress, 0);
+        match t.observe(ReadyToCut, 0) {
+            Observation::Valid { from, to } => assert!(is_calibration_completion(from, to)),
+            other => panic!("expected Valid, got {other:?}"),
+        }
+
+        // 9->7: calibration completion via the computing path.
+        let mut t = StateTracker::default();
+        t.observe(CalibrationComputing, 0);
+        match t.observe(ReadyToCut, 0) {
+            Observation::Valid { from, to } => assert!(is_calibration_completion(from, to)),
+            other => panic!("expected Valid, got {other:?}"),
+        }
+
+        // 5->7: apply-tension, must NOT read as completion.
+        let mut t = StateTracker::default();
+        t.observe(TakingSlack, 0);
+        match t.observe(ReadyToCut, 0) {
+            Observation::Valid { from, to } => assert!(!is_calibration_completion(from, to)),
+            other => panic!("expected Valid, got {other:?}"),
+        }
+
+        // Unchanged re-reports of 7 must not be (mis)treated as a completion.
+        let mut t = StateTracker::default();
+        t.observe(ReadyToCut, 0); // First
+        assert_eq!(t.observe(ReadyToCut, 0), Observation::Unchanged);
     }
 
     #[test]
