@@ -17,24 +17,99 @@ pub struct MaslowInfo {
     pub homed: bool,
     #[serde(rename = "calibrationInProgress")]
     pub calibration_in_progress: bool,
-    /// Belt lengths (mm) for each arm.
-    pub tl: f32,
-    pub tr: f32,
-    pub br: f32,
-    pub bl: f32,
-    /// Belt position errors (mm) for each arm.
-    pub etl: f32,
-    pub etr: f32,
-    pub ebr: f32,
-    pub ebl: f32,
+    /// Belt lengths (mm) for each arm. `None` when the firmware reported a
+    /// NaN/Inf reading for that arm (see `sanitize_minfo_json`).
+    pub tl: Option<f32>,
+    pub tr: Option<f32>,
+    pub br: Option<f32>,
+    pub bl: Option<f32>,
+    /// Belt position errors (mm) for each arm. `None` when the firmware
+    /// reported a NaN/Inf reading for that arm.
+    pub etl: Option<f32>,
+    pub etr: Option<f32>,
+    pub ebr: Option<f32>,
+    pub ebl: Option<f32>,
     pub extended: bool,
 }
 
+/// Replace bare `nan` / `inf` / `-inf` / `+inf` tokens (the firmware's `%g`
+/// printf output for a NaN/Inf belt reading, glibc/newlib style) with `null`
+/// when they appear as JSON values, so the line parses as valid JSON. Only
+/// touches unquoted alphabetic runs outside of string literals; this MINFO
+/// blob is a small, fixed, flat JSON shape (no nested objects/arrays), so a
+/// hand-rolled scan is enough and avoids pulling in the `regex` crate, which
+/// isn't already a dependency of this crate.
+fn sanitize_minfo_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    let mut chars = json.char_indices().peekable();
+    let mut in_string = false;
+
+    while let Some((i, c)) = chars.next() {
+        if in_string {
+            out.push(c);
+            if c == '\\' {
+                // Preserve the escaped character verbatim (e.g. `\"`) without
+                // reinterpreting it as a closing quote.
+                if let Some(&(_, next)) = chars.peek() {
+                    out.push(next);
+                    chars.next();
+                }
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if c == '"' {
+            in_string = true;
+            out.push(c);
+            continue;
+        }
+
+        if c.is_ascii_alphabetic() {
+            // Collect the maximal run of ASCII letters starting here. Outside
+            // a string, the only such runs this JSON shape can contain are
+            // `true`/`false`/`null` or the bad `nan`/`inf` tokens (numbers
+            // never contain letters other than a bare exponent `e`, which is
+            // a single-character run and never matches).
+            let start = i;
+            let mut end = i + c.len_utf8();
+            while let Some(&(j, nc)) = chars.peek() {
+                if nc.is_ascii_alphabetic() {
+                    end = j + nc.len_utf8();
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let word = &json[start..end];
+            if word.eq_ignore_ascii_case("nan") || word.eq_ignore_ascii_case("inf") {
+                // Absorb a sign that belongs to this token (e.g. `-inf`).
+                if out.ends_with('-') || out.ends_with('+') {
+                    out.pop();
+                }
+                out.push_str("null");
+            } else {
+                out.push_str(word);
+            }
+            continue;
+        }
+
+        out.push(c);
+    }
+
+    out
+}
+
 /// Parse a `MINFO: { ... }` telemetry line. Returns None if it is not a MINFO
-/// line or the JSON is malformed (e.g. nan/inf values).
+/// line or the JSON is malformed. NaN/Inf belt readings (rendered as bare
+/// `nan`/`inf`/`-inf` by the firmware's `%g` formatting) are sanitized to
+/// `null` first, so a single bad reading degrades that field to `None`
+/// instead of failing the whole parse.
 pub fn parse_minfo(line: &str) -> Option<MaslowInfo> {
     let json = line.trim().strip_prefix("MINFO:")?.trim();
-    serde_json::from_str(json).ok()
+    let sanitized = sanitize_minfo_json(json);
+    serde_json::from_str(&sanitized).ok()
 }
 
 /// Parse a `[MSG:INFO: Current state: N]` line into the state number.
@@ -535,9 +610,35 @@ mod tests {
         let info = parse_minfo(line).unwrap();
         assert!(info.homed);
         assert!(!info.calibration_in_progress);
-        assert_eq!(info.tl, 1234.5);
-        assert_eq!(info.ebl, 0.3);
+        assert_eq!(info.tl, Some(1234.5));
+        assert_eq!(info.ebl, Some(0.3));
         assert!(!info.extended);
+    }
+
+    #[test]
+    fn parses_minfo_with_nan_belt_reading() {
+        // Firmware's `%g` formatting prints bare `nan`/`inf`/`-inf` for a
+        // NaN/Inf belt reading, which is not valid JSON. The sanitizer must
+        // turn just that field into `null` (-> None) and leave the rest of
+        // the reading intact rather than failing the whole parse.
+        let line = "MINFO: { \"homed\": true, \"calibrationInProgress\": false, \"tl\": nan, \"tr\": 1230.1, \"br\": inf, \"bl\": -inf, \"etl\": 0.1, \"etr\": -0.2, \"ebr\": 0.0, \"ebl\": 0.3, \"extended\": false }";
+        let info = parse_minfo(line).expect("sanitized MINFO should parse");
+        assert_eq!(info.tl, None);
+        assert_eq!(info.br, None);
+        assert_eq!(info.bl, None);
+        assert_eq!(info.tr, Some(1230.1));
+        assert_eq!(info.etl, Some(0.1));
+        assert_eq!(info.etr, Some(-0.2));
+        assert_eq!(info.ebr, Some(0.0));
+        assert_eq!(info.ebl, Some(0.3));
+        assert!(info.homed);
+        assert!(!info.extended);
+    }
+
+    #[test]
+    fn sanitizer_leaves_strings_and_normal_numbers_alone() {
+        let json = "{ \"note\": \"contains inf and nan as text\", \"x\": -12.5, \"y\": 1.5e10 }";
+        assert_eq!(sanitize_minfo_json(json), json);
     }
 
     #[test]
