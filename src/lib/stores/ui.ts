@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 
 /** Top-level navigation destinations (single responsive shell). */
-export type Tab = "main" | "run" | "calibrate" | "files" | "config";
+export type Tab = "main" | "run" | "calibrate" | "files" | "config" | "settings";
 
 /** Sub-tabs inside MAIN. */
 export type MainSubTab = "jog" | "belts" | "mdi";
@@ -17,7 +17,7 @@ export const CONSOLE_DEFAULT_HEIGHT = 220;
 
 const hasStorage = typeof localStorage !== "undefined";
 
-const TABS: Tab[] = ["main", "run", "calibrate", "files", "config"];
+const TABS: Tab[] = ["main", "run", "calibrate", "files", "config", "settings"];
 const SUBTABS: MainSubTab[] = ["jog", "belts", "mdi"];
 
 function loadTab(): Tab {
