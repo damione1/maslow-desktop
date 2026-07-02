@@ -2,9 +2,11 @@
 // the mutating actions all report the latest cached job progress, or an
 // "idle" Job when nothing has ever streamed.
 
+use crate::grpc::stream;
 use crate::proto::maslow::v1 as pb;
 use crate::proto::maslow::v1::job_service_server::JobService;
 use crate::service::machine::MaslowService;
+use futures_util::StreamExt;
 use std::pin::Pin;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -78,8 +80,8 @@ impl JobService for JobServiceImpl {
         &self,
         _request: Request<pb::WatchJobProgressRequest>,
     ) -> Result<Response<Self::WatchJobProgressStream>, Status> {
-        Err(Status::unimplemented(
-            "streaming not implemented yet: a future PR subscribes this to svc.events",
-        ))
+        let rx = self.svc.events.subscribe();
+        let jobs = stream::job_progress_stream(rx).map(Ok);
+        Ok(Response::new(Box::pin(jobs)))
     }
 }
