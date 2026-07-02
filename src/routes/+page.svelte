@@ -13,6 +13,7 @@
   import CalibrateTab from "$lib/components/tabs/CalibrateTab.svelte";
   import FilesTab from "$lib/components/tabs/FilesTab.svelte";
   import ConfigTab from "$lib/components/tabs/ConfigTab.svelte";
+  import SettingsTab from "$lib/components/tabs/SettingsTab.svelte";
   import ConfirmModal from "$lib/components/ui/ConfirmModal.svelte";
 
   onMount(() => {
@@ -41,6 +42,7 @@
     <div class="panel" class:active={$activeTab === "calibrate"}><CalibrateTab /></div>
     <div class="panel" class:active={$activeTab === "files"}><FilesTab /></div>
     <div class="panel" class:active={$activeTab === "config"}><ConfigTab /></div>
+    <div class="panel" class:active={$activeTab === "settings"}><SettingsTab /></div>
   {/snippet}
 
   {#snippet statusbar()}

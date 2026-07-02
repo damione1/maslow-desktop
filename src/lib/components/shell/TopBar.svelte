@@ -12,6 +12,7 @@
     { id: "calibrate", label: "Calibrate", glyph: "◎" },
     { id: "files", label: "Files", glyph: "▤" },
     { id: "config", label: "Config", glyph: "⚙" },
+    { id: "settings", label: "Settings", glyph: "🔑" },
   ];
 
   let host = $state($connection.host);
