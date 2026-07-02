@@ -7,6 +7,12 @@ import { fwVersion } from "$lib/stores/connection";
 export const SUPPORTED_MIN = "1.21";
 export const SUPPORTED_MAX = "1.22";
 
+// Firmware version at which full calibration became usable through this app. Below this,
+// the firmware drives calibration through the `$ACKCAL` client-recompute handshake (removed
+// in 1.22, where recompute moved on-device); this app does not implement that handshake, so
+// calibration must be run from the firmware's embedded web UI on older builds instead.
+const CALIBRATION_MIN = "1.22";
+
 export type FwSupport = "ok" | "untested_old" | "untested_new" | "unknown";
 
 /** Extract [major, minor] from a version string like "1.22" or "1.22-3-gabc". */
@@ -27,6 +33,16 @@ export function firmwareSupport(ver: string | null | undefined): FwSupport {
   if (cmp(v, majorMinor(SUPPORTED_MIN)!) < 0) return "untested_old";
   if (cmp(v, majorMinor(SUPPORTED_MAX)!) > 0) return "untested_new";
   return "ok";
+}
+
+/** Whether this app's calibration wizard can run a full calibration on the connected
+ * firmware. Unknown versions are treated as supported so an unreadable version string
+ * doesn't needlessly block the operator. */
+export function supportsFullCalibration(ver: string | null | undefined): boolean {
+  if (!ver) return true;
+  const v = majorMinor(ver);
+  if (!v) return true;
+  return cmp(v, majorMinor(CALIBRATION_MIN)!) >= 0;
 }
 
 /** A warning message when the connected firmware is outside the tested range,
