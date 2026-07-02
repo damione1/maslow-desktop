@@ -54,6 +54,10 @@ fn build_router(svc: Arc<MaslowService>) -> Router {
         .merge(config::router())
         .merge(files::router())
         .merge(calibration::router())
+        // Nested before the auth layer below, so the same `auth_middleware`
+        // gate that covers the REST routes also covers every MCP request:
+        // there is no separate MCP-specific auth path.
+        .route_service("/mcp", crate::mcp::service(svc.clone()))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(svc.clone(), auth_middleware))
         .with_state(svc)
