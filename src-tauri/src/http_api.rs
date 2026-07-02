@@ -235,8 +235,12 @@ pub async fn sd_toolpath(host: String, path: String) -> Result<crate::toolpath::
         return Err(format!("download: HTTP {}", resp.status().as_u16()));
     }
     let body = resp.text().await.map_err(|e| format!("download read: {e}"))?;
-    let lines: Vec<String> = body.lines().filter_map(crate::streaming::clean_line).collect();
-    Ok(crate::toolpath::parse_toolpath(&lines))
+    tauri::async_runtime::spawn_blocking(move || {
+        let lines: Vec<String> = body.lines().filter_map(crate::streaming::clean_line).collect();
+        crate::toolpath::parse_toolpath(&lines)
+    })
+    .await
+    .map_err(|e| format!("sd_toolpath join: {e}"))
 }
 
 /// Test reachability of the machine and fetch a bit of firmware info.

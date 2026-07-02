@@ -5,6 +5,7 @@
   import { wsState, machineStatus } from "$lib/stores/machine";
   import { actionPolicy } from "$lib/stores/maslow";
   import { layout } from "$lib/stores/viewport";
+  import { gcodeListOpen } from "$lib/stores/ui";
   import {
     jobProgress,
     loadedJob,
@@ -246,11 +247,21 @@
     <ToolpathView />
   </div>
 
-  <!-- The textual move list is the nerdy bit: collapsed by default. -->
-  <details class="acc gcode">
-    <summary>G-code lines</summary>
-    <div class="acc-body list-stacked"><GcodeList /></div>
-  </details>
+  <!-- The textual move list is the nerdy bit: collapsed by default, and its
+       (potentially huge) row list is only mounted once the operator opens it. -->
+  <div class="acc gcode">
+    <button
+      type="button"
+      class="acc-toggle"
+      aria-expanded={$gcodeListOpen}
+      onclick={() => ($gcodeListOpen = !$gcodeListOpen)}
+    >
+      G-code lines
+    </button>
+    {#if $gcodeListOpen}
+      <div class="acc-body list-stacked"><GcodeList /></div>
+    {/if}
+  </div>
 </div>
 
 {#if showSd}
@@ -290,7 +301,10 @@
     border-radius: var(--radius-lg);
     padding: var(--gap);
   }
-  .acc > summary {
+  .acc-toggle {
+    all: unset;
+    display: block;
+    width: 100%;
     cursor: pointer;
     font-weight: 600;
     color: var(--text-dim);
@@ -299,7 +313,7 @@
     font-size: 0.9em;
     user-select: none;
   }
-  .acc[open] > summary {
+  .acc-toggle[aria-expanded="true"] {
     margin-bottom: var(--gap);
   }
   .acc-body.list-stacked {

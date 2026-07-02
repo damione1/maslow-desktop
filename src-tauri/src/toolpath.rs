@@ -265,11 +265,17 @@ fn centre_from_radius(x0: f64, y0: f64, x1: f64, y1: f64, r: f64, cw: bool) -> O
 }
 
 /// Read a local G-code file and parse it into a 2D toolpath for preview and the
-/// trace-boundary action. Pure compute apart from the file read.
+/// trace-boundary action. Large files (100k+ lines) take real time to parse, so
+/// the read + parse runs on a blocking thread and off the async runtime that
+/// also drives the WebSocket connection loop.
 #[tauri::command]
-pub fn load_toolpath(path: String) -> Result<Toolpath, String> {
-    let lines = crate::streaming::load_gcode(&path)?;
-    Ok(parse_toolpath(&lines))
+pub async fn load_toolpath(path: String) -> Result<Toolpath, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let lines = crate::streaming::load_gcode(&path)?;
+        Ok(parse_toolpath(&lines))
+    })
+    .await
+    .map_err(|e| format!("load_toolpath join: {e}"))?
 }
 
 #[cfg(test)]
