@@ -51,9 +51,18 @@ export const firmwareNotice = derived(fwVersion, ($ver) => {
   const support = firmwareSupport($ver);
   if (support === "ok" || support === "unknown") return null;
   const direction = support === "untested_old" ? "older than" : "newer than";
+  // Firmware below the tested range is always below CALIBRATION_MIN too, so
+  // it isn't just "untested": full calibration through this app specifically
+  // won't work there. Say that plainly instead of folding it into the
+  // generic "some actions may not behave as expected" caveat.
+  const calibrationCaveat =
+    support === "untested_old"
+      ? ` Full calibration specifically requires firmware v${CALIBRATION_MIN}+; use the firmware's embedded web UI for that on this machine.`
+      : "";
   return (
     `Firmware ${$ver} is ${direction} the tested range ` +
-    `(FluidNC v${SUPPORTED_MIN} to v${SUPPORTED_MAX}). ` +
-    `This software has not been tested with it; some actions may not behave as expected. Proceed with caution.`
+    `(FluidNC v${SUPPORTED_MIN} to v${SUPPORTED_MAX}).` +
+    `${calibrationCaveat} ` +
+    `This software has not been tested with it; some other actions may not behave as expected. Proceed with caution.`
   );
 });
