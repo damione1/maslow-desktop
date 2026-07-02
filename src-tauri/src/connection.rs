@@ -18,6 +18,7 @@ use crate::calibration;
 use crate::grbl;
 use crate::maslow;
 use crate::service::machine::MaslowService;
+use crate::service::snapshot::{publish, MachineEvent, WsState};
 use crate::streaming::{self, Job};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -151,19 +152,22 @@ pub(crate) async fn connection_loop(
     mut rx: UnboundedReceiver<WsCommand>,
     running: Arc<AtomicBool>,
     upload_active: Arc<AtomicBool>,
+    svc: Arc<MaslowService>,
 ) {
     // The job lives across reconnects: a dropped socket pauses it, the next
     // socket can resume on the user's request.
     let mut job: Option<Job> = None;
 
     while running.load(Ordering::SeqCst) {
-        match run_socket(&app, &url, &mut rx, &running, &mut job, &upload_active).await {
+        match run_socket(&app, &url, &mut rx, &running, &mut job, &upload_active, &svc).await {
             Ok(_) => {}
             Err(e) => {
+                publish(&svc, MachineEvent::WsError(e.clone()));
                 let _ = app.emit("ws-error", e);
             }
         }
         let _ = app.emit("ws-state", "disconnected");
+        publish(&svc, MachineEvent::WsState(WsState::Disconnected));
 
         // A live job whose socket just dropped is now interrupted: freeze it at
         // the last acknowledged line (firmware buffer state is unknown).
@@ -171,7 +175,7 @@ pub(crate) async fn connection_loop(
             if j.active() {
                 j.invalidate_inflight();
                 streaming::persist(&app, j, "interrupted");
-                streaming::emit_progress(&app, &job, Some("interrupted"));
+                streaming::emit_progress(&app, &svc, &job, Some("interrupted"));
             }
         }
 
@@ -181,6 +185,7 @@ pub(crate) async fn connection_loop(
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     let _ = app.emit("ws-state", "disconnected");
+    publish(&svc, MachineEvent::WsState(WsState::Disconnected));
 }
 
 /// Recognise the short-form Maslow *action* commands (the belt / calibration /
@@ -248,6 +253,7 @@ async fn run_socket(
     running: &Arc<AtomicBool>,
     job: &mut Option<Job>,
     upload_active: &Arc<AtomicBool>,
+    svc: &Arc<MaslowService>,
 ) -> Result<(), String> {
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     request
@@ -260,6 +266,7 @@ async fn run_socket(
     let (mut write, mut read) = ws.split();
 
     let _ = app.emit("ws-state", "connected");
+    publish(svc, MachineEvent::WsState(WsState::Connected));
 
     let mut buf = String::new();
     let mut status_period = STATUS_FAST_MS;
@@ -276,7 +283,7 @@ async fn run_socket(
     let mut last_activity = Instant::now();
     let mut ctx = SocketCtx::default();
     // Emit an initial policy so realtime controls light up immediately.
-    refresh_policy(app, &mut ctx, job_active(job));
+    refresh_policy(app, svc, &mut ctx, job_active(job));
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -295,13 +302,13 @@ async fn run_socket(
                                 while let Some(idx) = buf.find('\n') {
                                     let raw: String = buf.drain(..=idx).collect();
                                     let line = raw.trim_end_matches(['\r', '\n']).to_string();
-                                    handle_incoming(app, &line, &mut ctx, &mut write, job).await?;
+                                    handle_incoming(app, svc, &line, &mut ctx, &mut write, job).await?;
                                 }
                             }
                             Message::Text(t) => {
                                 for raw in t.split('\n') {
                                     let line = raw.trim_end_matches('\r').to_string();
-                                    handle_incoming(app, &line, &mut ctx, &mut write, job).await?;
+                                    handle_incoming(app, svc, &line, &mut ctx, &mut write, job).await?;
                                 }
                             }
                             Message::Close(_) => return Ok(()),
@@ -318,6 +325,8 @@ async fn run_socket(
                         if job_active(job) {
                             let _ = app.emit("grbl-line",
                                 "[blocked] stop the job to send manual commands".to_string());
+                            publish(svc, MachineEvent::GrblLine(
+                                "[blocked] stop the job to send manual commands".to_string()));
                         } else {
                             let is_action = is_maslow_action(&l);
                             if !l.ends_with('\n') { l.push('\n'); }
@@ -366,7 +375,7 @@ async fn run_socket(
                                 j.invalidate_inflight();
                                 streaming::persist(app, j, "interrupted");
                             }
-                            streaming::emit_progress(app, job, Some("interrupted"));
+                            streaming::emit_progress(app, svc, job, Some("interrupted"));
                         }
                     }
                     Some(WsCommand::StartJob { lines, path, start_index }) => {
@@ -375,7 +384,7 @@ async fn run_socket(
                             streaming::persist(app, j, "running");
                         }
                         pump(&mut write, job).await?;
-                        streaming::emit_progress(app, job, None);
+                        streaming::emit_progress(app, svc, job, None);
                     }
                     Some(WsCommand::PauseJob) => {
                         if let Some(j) = job.as_mut() {
@@ -384,7 +393,7 @@ async fn run_socket(
                         }
                         // Feed hold so motion stops promptly, not just queueing.
                         let _ = write.send(Message::Binary(vec![b'!'])).await;
-                        streaming::emit_progress(app, job, None);
+                        streaming::emit_progress(app, svc, job, None);
                     }
                     Some(WsCommand::ResumeJob) => {
                         if let Some(j) = job.as_mut() {
@@ -393,7 +402,7 @@ async fn run_socket(
                         // Release a possible feed hold before refilling the buffer.
                         let _ = write.send(Message::Binary(vec![b'~'])).await;
                         pump(&mut write, job).await?;
-                        streaming::emit_progress(app, job, None);
+                        streaming::emit_progress(app, svc, job, None);
                     }
                     Some(WsCommand::StopJob) => {
                         // A job stop must actually halt the machine. Clearing the
@@ -406,14 +415,16 @@ async fn run_socket(
                         let _ = write.send(Message::Binary(vec![0x18])).await;
                         streaming::clear_saved(app);
                         *job = None;
-                        streaming::emit_progress(app, job, None);
+                        streaming::emit_progress(app, svc, job, None);
                         // The job lock is gone; recompute the action policy.
-                        refresh_policy(app, &mut ctx, false);
+                        refresh_policy(app, svc, &mut ctx, false);
                     }
                     Some(WsCommand::DumpConfig) => {
                         if job_active(job) {
                             let _ = app.emit("config-dump-error",
                                 "stop the job to read the config".to_string());
+                            publish(svc, MachineEvent::ConfigDumpError(
+                                "stop the job to read the config".to_string()));
                         } else {
                             // Capture the streamed YAML until the terminating ok;
                             // suspend the burst poll so its `ok`s can't truncate it.
@@ -450,6 +461,7 @@ async fn run_socket(
                         ctx.capture = None;
                         ctx.capture_started = None;
                         let _ = app.emit("config-dump-error", "config dump timed out".to_string());
+                        publish(svc, MachineEvent::ConfigDumpError("config dump timed out".to_string()));
                     }
                 }
                 if last_activity.elapsed() > Duration::from_secs(20) {
@@ -506,6 +518,7 @@ async fn run_socket(
 /// char-counting), then emit it for the console / status panel.
 async fn handle_incoming(
     app: &AppHandle,
+    svc: &Arc<MaslowService>,
     line: &str,
     ctx: &mut SocketCtx,
     write: &mut WsSink,
@@ -531,19 +544,19 @@ async fn handle_incoming(
                 if let Some(j) = job.as_mut() {
                     streaming::persist(app, j, final_state);
                 }
-                streaming::emit_progress(app, job, None);
+                streaming::emit_progress(app, svc, job, None);
                 streaming::clear_saved(app);
                 *job = None;
                 // Job finished: manual actions become available again.
-                refresh_policy(app, ctx, false);
+                refresh_policy(app, svc, ctx, false);
             } else {
-                streaming::emit_progress(app, job, None);
+                streaming::emit_progress(app, svc, job, None);
             }
         }
     }
 
     let job_active = job_active(job);
-    route_line(app, line, ctx, job_active);
+    route_line(app, svc, line, ctx, job_active);
     Ok(())
 }
 
@@ -661,7 +674,7 @@ struct SocketCtx {
 }
 
 #[derive(serde::Serialize, Clone)]
-struct Discord {
+pub(crate) struct Discord {
     /// "straggler" = suppressed, "accepted" = machine prevailed (state updated).
     kind: &'static str,
     from: i32,
@@ -670,7 +683,13 @@ struct Discord {
     to_label: String,
 }
 
-fn emit_discord(app: &AppHandle, kind: &'static str, from: maslow::CalState, to: maslow::CalState) {
+fn emit_discord(
+    app: &AppHandle,
+    svc: &Arc<MaslowService>,
+    kind: &'static str,
+    from: maslow::CalState,
+    to: maslow::CalState,
+) {
     let _ = app.emit(
         "maslow-discord",
         Discord {
@@ -681,29 +700,41 @@ fn emit_discord(app: &AppHandle, kind: &'static str, from: maslow::CalState, to:
             to_label: to.label().to_string(),
         },
     );
+    publish(
+        svc,
+        MachineEvent::Discord(Discord {
+            kind,
+            from: from.code(),
+            to: to.code(),
+            from_label: from.label().to_string(),
+            to_label: to.label().to_string(),
+        }),
+    );
 }
 
 /// Emit `maslow-cal-complete` once per calibration run, whichever path (the
 /// state transition or the corroborating log line) gets there first.
-fn emit_cal_complete(app: &AppHandle, ctx: &mut SocketCtx) {
+fn emit_cal_complete(app: &AppHandle, svc: &Arc<MaslowService>, ctx: &mut SocketCtx) {
     if ctx.cal_complete_emitted {
         return;
     }
     ctx.cal_complete_emitted = true;
     let _ = app.emit("maslow-cal-complete", ());
+    publish(svc, MachineEvent::CalComplete);
 }
 
 /// Recompute the unified action policy and emit it only when it changed.
-fn refresh_policy(app: &AppHandle, ctx: &mut SocketCtx, job_active: bool) {
+fn refresh_policy(app: &AppHandle, svc: &Arc<MaslowService>, ctx: &mut SocketCtx, job_active: bool) {
     let p = maslow::action_policy(&ctx.fluidnc_state, ctx.tracker.current(), job_active);
     if ctx.last_policy.as_ref() != Some(&p) {
         ctx.last_policy = Some(p.clone());
+        publish(svc, MachineEvent::ActionPolicy(p.clone()));
         let _ = app.emit("action-policy", p);
     }
 }
 
 /// Classify and emit a single complete line, updating reconciliation state.
-fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool) {
+fn route_line(app: &AppHandle, svc: &Arc<MaslowService>, line: &str, ctx: &mut SocketCtx, job_active: bool) {
     if line.is_empty() {
         return;
     }
@@ -720,7 +751,7 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
             }
             let yaml = ctx.capture.take().unwrap().join("\n");
             ctx.capture_started = None;
-            finalize_config_dump(app, &yaml);
+            finalize_config_dump(app, svc, &yaml);
             return;
         }
         if grbl::parse_status_report(line).is_some() {
@@ -751,13 +782,15 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
             ctx.fluidnc_state = status.state.clone();
         }
         let _ = app.emit("machine-status", &status);
+        publish(svc, MachineEvent::MachineStatus(status.clone()));
         if changed {
-            refresh_policy(app, ctx, job_active);
+            refresh_policy(app, svc, ctx, job_active);
         }
         return;
     }
     if let Some(info) = maslow::parse_minfo(line) {
         let _ = app.emit("maslow-info", &info);
+        publish(svc, MachineEvent::MaslowInfo(info.clone()));
         return;
     }
     if let Some(state) = maslow::parse_state(line) {
@@ -766,13 +799,15 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
             maslow::Observation::First(s) => {
                 ctx.cal_complete_emitted = false;
                 let _ = app.emit("maslow-state", maslow::policy_for(s));
-                refresh_policy(app, ctx, job_active);
+                publish(svc, MachineEvent::MaslowState(maslow::policy_for(s)));
+                refresh_policy(app, svc, ctx, job_active);
             }
             maslow::Observation::Valid { from, to } => {
                 let _ = app.emit("maslow-state", maslow::policy_for(to));
-                refresh_policy(app, ctx, job_active);
+                publish(svc, MachineEvent::MaslowState(maslow::policy_for(to)));
+                refresh_policy(app, svc, ctx, job_active);
                 if maslow::is_calibration_completion(from, to) {
-                    emit_cal_complete(app, ctx);
+                    emit_cal_complete(app, svc, ctx);
                 } else {
                     // Any other transition means we've moved on from the last
                     // completed (or completing) run, so a future 6->7/9->7 can
@@ -782,32 +817,37 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
             }
             maslow::Observation::Unchanged => {}
             maslow::Observation::Straggler { from, to } => {
-                emit_discord(app, "straggler", from, to);
+                emit_discord(app, svc, "straggler", from, to);
             }
             maslow::Observation::Discord { from, to } => {
                 ctx.cal_complete_emitted = false;
-                emit_discord(app, "accepted", from, to);
+                emit_discord(app, svc, "accepted", from, to);
                 let _ = app.emit("maslow-state", maslow::policy_for(to));
-                refresh_policy(app, ctx, job_active);
+                publish(svc, MachineEvent::MaslowState(maslow::policy_for(to)));
+                refresh_policy(app, svc, ctx, job_active);
             }
         }
         return;
     }
     if let Some(wp) = maslow::parse_waypoint(line) {
+        publish(svc, MachineEvent::Waypoint(wp.clone()));
         let _ = app.emit("maslow-waypoint", wp);
         return;
     }
     if let Some(measurements) = calibration::parse_clbm(line) {
         // Raw belt measurements the firmware logs before each recompute — the
         // input the client-side solver re-solves from.
+        publish(svc, MachineEvent::CalMeasurements(measurements.clone()));
         let _ = app.emit("cal-measurements", measurements);
         return;
     }
     if let Some(fit) = calibration::parse_fit_line(line) {
+        publish(svc, MachineEvent::CalFirmwareFit(fit.clone()));
         let _ = app.emit("cal-firmware-fit", fit);
         // fall through so the fit summary also appears in the console
     }
     if let Some(anchors) = calibration::parse_recompute_line(line) {
+        publish(svc, MachineEvent::CalFirmwareAnchors(anchors));
         let _ = app.emit("cal-firmware-anchors", anchors);
         // fall through so the result also appears in the console
     }
@@ -818,7 +858,7 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         // Calibration.cpp logs this message), so skip it if already handled to
         // avoid double-firing the toast; only emit here as a fallback if the
         // transition was, for whatever reason, not observed.
-        emit_cal_complete(app, ctx);
+        emit_cal_complete(app, svc, ctx);
         // fall through so the message also appears in the console
     }
     if is_control(line) {
@@ -830,12 +870,14 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         // firmware ever starts broadcasting a real "another client took over" message,
         // this is where a UI notification would be wired up.
         let _ = app.emit("ws-control", line.to_string());
+        publish(svc, MachineEvent::WsControl(line.to_string()));
         return;
     }
     if is_console_chatter(line) {
         return;
     }
     let _ = app.emit("grbl-line", line.to_string());
+    publish(svc, MachineEvent::GrblLine(line.to_string()));
 }
 
 /// Periodic firmware chatter the embedded UI also hides from its (non-verbose)
@@ -854,10 +896,11 @@ fn is_console_chatter(line: &str) -> bool {
 /// Flatten a captured `$CD` YAML dump and emit it as `config-dump`, plus the
 /// derived Maslow config and anchors (rebuilt from the same dump via a synthetic
 /// `path=value` rendering the existing parsers understand).
-fn finalize_config_dump(app: &AppHandle, yaml: &str) {
+fn finalize_config_dump(app: &AppHandle, svc: &Arc<MaslowService>, yaml: &str) {
     let entries = crate::fluidnc::flatten_config(yaml);
     if entries.is_empty() {
         let _ = app.emit("config-dump-error", "empty or unparseable config dump".to_string());
+        publish(svc, MachineEvent::ConfigDumpError("empty or unparseable config dump".to_string()));
         return;
     }
     let synthetic: String = entries
@@ -865,8 +908,10 @@ fn finalize_config_dump(app: &AppHandle, yaml: &str) {
         .map(|e| format!("{}={}\n", e.path, e.value))
         .collect();
     let _ = app.emit("config-dump", &entries);
+    publish(svc, MachineEvent::ConfigDump(entries.clone()));
     if let Some(anchors) = maslow::parse_anchors(&synthetic) {
         let _ = app.emit("maslow-anchors", &anchors);
+        publish(svc, MachineEvent::Anchors(anchors.clone()));
     }
 }
 

@@ -35,17 +35,22 @@ fn ws_url(host: &str) -> String {
 pub struct MaslowService {
     pub conn: ConnState,
     pub app: AppHandle,
+    pub snapshot: crate::service::snapshot::SharedSnapshot,
+    pub events: tokio::sync::broadcast::Sender<crate::service::snapshot::MachineEvent>,
 }
 
 impl MaslowService {
     pub fn new(app: AppHandle) -> Self {
+        let (events, _rx) = tokio::sync::broadcast::channel(256);
         Self {
             conn: ConnState::default(),
             app,
+            snapshot: std::sync::Arc::new(std::sync::RwLock::new(Default::default())),
+            events,
         }
     }
 
-    pub async fn connect(&self, host: String) -> Result<(), String> {
+    pub async fn connect(self: &Arc<Self>, host: String) -> Result<(), String> {
         // Reject a malformed host up front. A bad URL can never connect, and the
         // reconnect loop would otherwise retry it every few seconds and spam the
         // console with "invalid uri character". Validate before touching any
@@ -67,8 +72,9 @@ impl MaslowService {
 
         let upload_active = self.conn.upload_active.clone();
         let app = self.app.clone();
+        let svc = Arc::clone(self);
         tokio::spawn(async move {
-            connection_loop(app, url, rx, running, upload_active).await;
+            connection_loop(app, url, rx, running, upload_active, svc).await;
         });
         Ok(())
     }

@@ -12,9 +12,12 @@
 // survives the automatic WebSocket reconnects; the on-disk copy survives a full
 // process restart.
 
+use crate::service::machine::MaslowService;
+use crate::service::snapshot::{publish, MachineEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -218,7 +221,12 @@ impl Job {
 }
 
 /// Emit a progress event for the current job (or an idle event when None).
-pub fn emit_progress(app: &AppHandle, job: &Option<Job>, state_override: Option<&str>) {
+pub fn emit_progress(
+    app: &AppHandle,
+    svc: &Arc<MaslowService>,
+    job: &Option<Job>,
+    state_override: Option<&str>,
+) {
     let p = match job {
         Some(j) => j.progress(state_override),
         None => Progress {
@@ -231,6 +239,7 @@ pub fn emit_progress(app: &AppHandle, job: &Option<Job>, state_override: Option<
             errors: 0,
         },
     };
+    publish(svc, MachineEvent::JobProgress(p.clone()));
     let _ = app.emit("stream-progress", p);
 }
 
