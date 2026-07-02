@@ -9,6 +9,7 @@ mod grpc;
 mod http;
 mod http_api;
 mod maslow;
+mod mcp;
 #[allow(clippy::all)]
 mod proto;
 mod service;
