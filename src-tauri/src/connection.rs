@@ -116,50 +116,33 @@ pub async fn request_config_dump(state: State<'_, Arc<MaslowService>>) -> Result
     state.request_config_dump().await
 }
 
-/// Begin streaming a G-code file. Loaded and parsed here so the frontend only
-/// passes a path. `start_index` lets a previous job resume mid-file. The file
-/// read runs on a blocking thread so a large file can't stall the async
-/// runtime that also drives the WebSocket connection loop.
 #[tauri::command]
 pub async fn stream_start(
     state: State<'_, Arc<MaslowService>>,
     path: String,
     start_index: usize,
 ) -> Result<usize, String> {
-    let read_path = path.clone();
-    let lines = tauri::async_runtime::spawn_blocking(move || streaming::load_gcode(&read_path))
-        .await
-        .map_err(|e| format!("stream_start join: {e}"))??;
-    let total = lines.len();
-    state
-        .send_cmd(WsCommand::StartJob {
-            lines,
-            path,
-            start_index,
-        })
-        .await?;
-    Ok(total)
+    state.start_job(path, start_index).await
 }
 
 #[tauri::command]
 pub async fn stream_pause(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
-    state.send_cmd(WsCommand::PauseJob).await
+    state.pause_job().await
 }
 
 #[tauri::command]
 pub async fn stream_resume(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
-    state.send_cmd(WsCommand::ResumeJob).await
+    state.resume_job().await
 }
 
 #[tauri::command]
 pub async fn stream_stop(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
-    state.send_cmd(WsCommand::StopJob).await
+    state.stop_job().await
 }
 
-/// Return a previously interrupted job persisted on disk, if resumable.
 #[tauri::command]
-pub fn stream_saved(app: AppHandle) -> Option<streaming::SavedJob> {
-    streaming::read_saved(&app)
+pub fn stream_saved(state: State<'_, Arc<MaslowService>>) -> Option<streaming::SavedJob> {
+    state.stream_saved()
 }
 
 pub(crate) async fn connection_loop(
