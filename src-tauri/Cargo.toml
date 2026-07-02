@@ -44,3 +44,7 @@ subtle = "2"
 rmcp = { version = "2", features = ["server", "transport-streamable-http-server"] }
 schemars = "1"
 
+# Only used by the `gen_docs` bin target (docs-site's generated API
+# reference); not part of the app's own runtime dependency surface.
+prost-reflect = "0.14"
+

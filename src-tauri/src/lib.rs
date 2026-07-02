@@ -20,6 +20,41 @@ use service::machine::MaslowService;
 use std::sync::Arc;
 use tauri::Manager;
 
+/// Plain-data snapshot of one registered MCP tool: name, description, and
+/// its JSON-schema input shape, with no `rmcp` or `mcp::McpServer` types in
+/// the signature. Exists solely so `bin/gen_docs` (a separate crate in this
+/// same package, building the docs-site MCP reference) can read the tool
+/// registry without this crate needing to make `mcp` (and everything it
+/// touches, transitively including `MaslowService`) part of its public API.
+#[derive(serde::Serialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Every registered MCP tool, grouped by domain, as plain owned data read
+/// from the same `rmcp::ToolRouter`s `mcp::McpServer::new` combines for the
+/// running server (see `mcp::tool_routers_by_domain`). Only `bin/gen_docs`
+/// calls this; the running app never does.
+pub fn mcp_tools_by_domain() -> Vec<(&'static str, Vec<McpToolInfo>)> {
+    mcp::tool_routers_by_domain()
+        .into_iter()
+        .map(|(domain, router)| {
+            let tools = router
+                .list_all()
+                .into_iter()
+                .map(|t| McpToolInfo {
+                    name: t.name.to_string(),
+                    description: t.description.map(|d| d.to_string()).unwrap_or_default(),
+                    input_schema: serde_json::Value::Object((*t.input_schema).clone()),
+                })
+                .collect();
+            (domain, tools)
+        })
+        .collect()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

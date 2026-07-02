@@ -1,0 +1,8 @@
+{
+  "label": "The App",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "Architecture and dev workflow for the Maslow Desktop app itself."
+  }
+}

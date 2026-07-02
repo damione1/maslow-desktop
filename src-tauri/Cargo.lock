@@ -2237,6 +2237,7 @@ dependencies = [
  "pbjson-types",
  "prost",
  "prost-build",
+ "prost-reflect",
  "reqwest 0.12.28",
  "rmcp",
  "schemars 1.2.1",
@@ -3111,6 +3112,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "prost-reflect"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5edd582b62f5cde844716e66d92565d7faf7ab1445c8cebce6e00fba83ddb2"
+dependencies = [
+ "once_cell",
+ "prost",
+ "prost-types",
 ]
 
 [[package]]
