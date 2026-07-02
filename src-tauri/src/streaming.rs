@@ -18,7 +18,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// GRBL serial RX buffer budget for character counting (128 - 1).
+/// GRBL character-counting RX budget. The firmware's actual WS channel buffer
+/// is 256 bytes (`WSChannel::RXBUFFERSIZE`), but we deliberately budget for
+/// half of that: it halves the worst-case queue depth in flight, at the cost
+/// of a bit of throughput. Keep 127 when re-tuning; start from 256, not 128.
 const RX_BUFFER: usize = 127;
 /// Persist to disk at most every N acked lines (plus on every state change).
 const PERSIST_EVERY: usize = 25;
