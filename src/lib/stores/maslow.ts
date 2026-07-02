@@ -8,14 +8,15 @@ import { CalState } from "$lib/stores/calState";
 export interface MaslowInfo {
   homed: boolean;
   calibrationInProgress: boolean;
-  tl: number;
-  tr: number;
-  br: number;
-  bl: number;
-  etl: number;
-  etr: number;
-  ebr: number;
-  ebl: number;
+  /** `null` when the firmware reported a NaN/Inf reading for that arm. */
+  tl: number | null;
+  tr: number | null;
+  br: number | null;
+  bl: number | null;
+  etl: number | null;
+  etr: number | null;
+  ebr: number | null;
+  ebl: number | null;
   extended: boolean;
 }
 

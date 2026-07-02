@@ -80,7 +80,7 @@
         ]
       : [],
   );
-  const fmt = (n: number) => n.toFixed(1);
+  const fmt = (n: number | null) => (n === null ? "?" : n.toFixed(1));
 </script>
 
 <div class="belts-panel">
@@ -99,10 +99,10 @@
   {#if belts.length > 0}
     <div class="belt-grid">
       {#each belts as b}
-        <div class="belt">
+        <div class="belt" class:bad={b.len === null || b.err === null}>
           <span class="bl">{b.label}</span>
           <span class="len">{fmt(b.len)}<small>mm</small></span>
-          <span class="err" class:warn={Math.abs(b.err) > 1}>{b.err >= 0 ? "+" : ""}{fmt(b.err)}</span>
+          <span class="err" class:warn={b.err !== null && Math.abs(b.err) > 1} class:bad={b.err === null}>{b.err !== null && b.err >= 0 ? "+" : ""}{fmt(b.err)}</span>
         </div>
       {/each}
     </div>
@@ -204,6 +204,9 @@
     border-radius: var(--radius);
     padding: 0.5em 0.7em;
   }
+  .belt.bad {
+    outline: 1px solid var(--warn);
+  }
   .bl {
     font-size: 0.75em;
     color: var(--text-mute);
@@ -228,6 +231,9 @@
   }
   .err.warn {
     color: #ff6b6b;
+  }
+  .err.bad {
+    color: var(--warn);
   }
   .hint {
     font-size: 0.85em;
