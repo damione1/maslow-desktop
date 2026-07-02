@@ -919,12 +919,14 @@ fn route_line(app: &AppHandle, line: &str, ctx: &mut SocketCtx, job_active: bool
         // fall through so the message also appears in the console
     }
     if is_control(line) {
+        // CURRENT_ID/ACTIVE_ID are sent once, right after a WS connects (see
+        // WSChannels::handleEvent's WStype_CONNECTED case in WSChannel.cpp), and only to
+        // that connecting channel: ACTIVE_ID is just wsChannel->id(), which is the same
+        // client's own number, so it can never disagree with the CURRENT_ID we were just
+        // given. There is no live signal here about a second client connecting; if the
+        // firmware ever starts broadcasting a real "another client took over" message,
+        // this is where a UI notification would be wired up.
         let _ = app.emit("ws-control", line.to_string());
-        if let Some(key) = line.split(':').next() {
-            if key == "CURRENT_ID" || key == "ACTIVE_ID" {
-                let _ = app.emit("ws-pageid", line.to_string());
-            }
-        }
         return;
     }
     if is_console_chatter(line) {
