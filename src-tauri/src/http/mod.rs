@@ -13,6 +13,7 @@ pub mod error;
 pub mod files;
 pub mod job;
 pub mod machine;
+pub mod sse;
 
 use crate::http::error::ApiError;
 use crate::service::machine::MaslowService;

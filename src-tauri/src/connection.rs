@@ -682,11 +682,11 @@ struct SocketCtx {
 #[derive(serde::Serialize, Clone)]
 pub(crate) struct Discord {
     /// "straggler" = suppressed, "accepted" = machine prevailed (state updated).
-    kind: &'static str,
-    from: i32,
-    to: i32,
-    from_label: String,
-    to_label: String,
+    pub(crate) kind: &'static str,
+    pub(crate) from: i32,
+    pub(crate) to: i32,
+    pub(crate) from_label: String,
+    pub(crate) to_label: String,
 }
 
 fn emit_discord(

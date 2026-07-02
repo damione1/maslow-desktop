@@ -3,14 +3,19 @@
 // firmware-version endpoints, the same `http_api` free function) so the
 // command strings live in exactly one place regardless of transport.
 
+use crate::grpc::stream;
 use crate::http::error::ApiError;
+use crate::http::sse::json_event_stream;
 use crate::http_api;
 use crate::proto::maslow::v1 as pb;
 use crate::service::machine::MaslowService;
 use axum::extract::{Query, State};
+use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::Stream;
 use serde::Deserialize;
+use std::convert::Infallible;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<MaslowService>> {
@@ -39,6 +44,7 @@ pub fn router() -> Router<Arc<MaslowService>> {
         .route("/v1/machines/default:saveConfig", post(save_config))
         .route("/v1/machines/default:pingMachine", get(ping_machine))
         .route("/v1/machines/default:firmwareVersion", get(get_firmware_version))
+        .route("/v1/machines/default:watch", get(watch_machine_events))
 }
 
 async fn get_machine_status(State(svc): State<Arc<MaslowService>>) -> Result<Json<pb::MachineStatus>, ApiError> {
@@ -200,4 +206,14 @@ async fn ping_machine(Query(q): Query<HostQuery>) -> Json<pb::PingMachineRespons
 async fn get_firmware_version(Query(q): Query<HostQuery>) -> Json<pb::GetFirmwareVersionResponse> {
     let version = http_api::firmware_version(q.host).await;
     Json(pb::GetFirmwareVersionResponse { version })
+}
+
+/// SSE equivalent of the gRPC `WatchMachineEvents` streaming RPC, built on
+/// the same `grpc::stream::machine_event_stream` adapter so the filtering and
+/// lag-handling logic is not duplicated per transport.
+async fn watch_machine_events(
+    State(svc): State<Arc<MaslowService>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = svc.events.subscribe();
+    json_event_stream(stream::machine_event_stream(rx))
 }

@@ -3,6 +3,7 @@
 // implementation shares the same mapping and field-width casts.
 
 use crate::calibration;
+use crate::connection;
 use crate::fluidnc;
 use crate::grbl;
 use crate::maslow;
@@ -290,6 +291,58 @@ impl From<snapshot::WsState> for pb::WsState {
     }
 }
 
+impl From<connection::Discord> for pb::Discord {
+    fn from(d: connection::Discord) -> Self {
+        pb::Discord {
+            kind: d.kind.to_string(),
+            from: d.from,
+            to: d.to,
+            from_label: d.from_label,
+            to_label: d.to_label,
+        }
+    }
+}
+
+/// Converts one domain `MachineEvent` into the `oneof`-wrapped proto message
+/// that `WatchMachineEvents` (gRPC) and its HTTP SSE equivalent stream.
+///
+/// `JobProgress` has no case in the `MachineEvent` oneof by design (see
+/// `machine.proto`'s comment on the message): job progress is high-frequency
+/// and has its own `WatchJobProgress` stream, so a telemetry-only watcher
+/// should not also receive it. `grpc::stream::machine_event_stream` filters
+/// it out before it reaches a subscriber; this arm exists only to keep the
+/// match exhaustive.
+impl From<snapshot::MachineEvent> for pb::MachineEvent {
+    fn from(event: snapshot::MachineEvent) -> Self {
+        use pb::machine_event::Payload;
+        let payload = match event {
+            snapshot::MachineEvent::WsState(s) => Some(Payload::WsState(pb::WsState::from(s) as i32)),
+            snapshot::MachineEvent::WsError(e) => Some(Payload::WsError(e)),
+            snapshot::MachineEvent::GrblLine(l) => Some(Payload::GrblLine(l)),
+            snapshot::MachineEvent::MachineStatus(s) => Some(Payload::Status(s.into())),
+            snapshot::MachineEvent::WsControl(c) => Some(Payload::WsControl(c)),
+            snapshot::MachineEvent::ActionPolicy(p) => Some(Payload::ActionPolicy(p.into())),
+            snapshot::MachineEvent::Anchors(a) => Some(Payload::Anchors(a.into())),
+            snapshot::MachineEvent::MaslowInfo(i) => Some(Payload::MaslowInfo(i.into())),
+            snapshot::MachineEvent::MaslowState(s) => Some(Payload::MaslowState(s.into())),
+            snapshot::MachineEvent::Waypoint(w) => Some(Payload::Waypoint(w.into())),
+            snapshot::MachineEvent::Discord(d) => Some(Payload::Discord(d.into())),
+            snapshot::MachineEvent::CalMeasurements(measurements) => Some(Payload::CalMeasurements(pb::MeasurementList {
+                measurements: measurements.into_iter().map(Into::into).collect(),
+            })),
+            snapshot::MachineEvent::CalFirmwareFit(f) => Some(Payload::CalFirmwareFit(f.into())),
+            snapshot::MachineEvent::CalFirmwareAnchors(p) => Some(Payload::CalFirmwareAnchors(p.into())),
+            snapshot::MachineEvent::CalComplete => Some(Payload::CalComplete(true)),
+            snapshot::MachineEvent::ConfigDump(entries) => Some(Payload::ConfigDump(pb::ConfigEntryList {
+                entries: entries.into_iter().map(Into::into).collect(),
+            })),
+            snapshot::MachineEvent::ConfigDumpError(e) => Some(Payload::ConfigDumpError(e)),
+            snapshot::MachineEvent::JobProgress(_) => None,
+        };
+        pb::MachineEvent { payload }
+    }
+}
+
 /// Build the `Snapshot` aggregate response from the cached telemetry. Fields
 /// with nothing observed yet on the current connection are simply left unset.
 pub fn snapshot_to_proto(snapshot: &snapshot::MachineSnapshot) -> pb::Snapshot {
@@ -460,5 +513,70 @@ mod tests {
         let proto: pb::Anchors = domain.clone().into();
         let back: maslow::Anchors = proto.into();
         assert_eq!(domain, back);
+    }
+
+    #[test]
+    fn machine_event_maps_plain_string_variant() {
+        let proto: pb::MachineEvent = snapshot::MachineEvent::GrblLine("ok".to_string()).into();
+        match proto.payload {
+            Some(pb::machine_event::Payload::GrblLine(line)) => assert_eq!(line, "ok"),
+            other => panic!("expected GrblLine payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn machine_event_wraps_measurements_in_measurement_list() {
+        let measurements = vec![calibration::Measurement {
+            tl: 1.0,
+            tr: 2.0,
+            bl: 3.0,
+            br: 4.0,
+        }];
+        let proto: pb::MachineEvent = snapshot::MachineEvent::CalMeasurements(measurements).into();
+        match proto.payload {
+            Some(pb::machine_event::Payload::CalMeasurements(list)) => {
+                assert_eq!(list.measurements.len(), 1);
+                assert_eq!(list.measurements[0].tr, 2.0);
+            }
+            other => panic!("expected CalMeasurements payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn machine_event_cal_complete_maps_to_bool_payload() {
+        let proto: pb::MachineEvent = snapshot::MachineEvent::CalComplete.into();
+        assert!(matches!(proto.payload, Some(pb::machine_event::Payload::CalComplete(true))));
+    }
+
+    #[test]
+    fn machine_event_job_progress_has_no_oneof_case() {
+        let progress = streaming::Progress {
+            state: "running".to_string(),
+            path: "/x.nc".to_string(),
+            name: "x.nc".to_string(),
+            sent: 1,
+            acked: 0,
+            total: 10,
+            errors: 0,
+        };
+        let proto: pb::MachineEvent = snapshot::MachineEvent::JobProgress(progress).into();
+        assert!(proto.payload.is_none());
+    }
+
+    #[test]
+    fn discord_conversion_carries_all_fields() {
+        let domain = connection::Discord {
+            kind: "straggler",
+            from: 2,
+            to: 4,
+            from_label: "Calibrating".to_string(),
+            to_label: "Complete".to_string(),
+        };
+        let proto: pb::Discord = domain.into();
+        assert_eq!(proto.kind, "straggler");
+        assert_eq!(proto.from, 2);
+        assert_eq!(proto.to, 4);
+        assert_eq!(proto.from_label, "Calibrating");
+        assert_eq!(proto.to_label, "Complete");
     }
 }

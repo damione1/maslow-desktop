@@ -3,10 +3,12 @@
 // action wrappers added in `service/machine.rs`), so the command strings
 // live in exactly one place.
 
+use crate::grpc::stream;
 use crate::http_api;
 use crate::proto::maslow::v1 as pb;
 use crate::proto::maslow::v1::machine_service_server::MachineService;
 use crate::service::machine::MaslowService;
+use futures_util::StreamExt;
 use std::pin::Pin;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -202,8 +204,8 @@ impl MachineService for MachineServiceImpl {
         &self,
         _request: Request<pb::WatchMachineEventsRequest>,
     ) -> Result<Response<Self::WatchMachineEventsStream>, Status> {
-        Err(Status::unimplemented(
-            "streaming not implemented yet: a future PR subscribes this to svc.events",
-        ))
+        let rx = self.svc.events.subscribe();
+        let events = stream::machine_event_stream(rx).map(Ok);
+        Ok(Response::new(Box::pin(events)))
     }
 }

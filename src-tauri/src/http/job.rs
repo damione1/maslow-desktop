@@ -2,12 +2,17 @@
 // singleton: GetJob and the mutating actions all report the latest cached
 // job progress, or an "idle" Job when nothing has ever streamed.
 
+use crate::grpc::stream;
 use crate::http::error::ApiError;
+use crate::http::sse::json_event_stream;
 use crate::proto::maslow::v1 as pb;
 use crate::service::machine::MaslowService;
 use axum::extract::State;
+use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::Stream;
+use std::convert::Infallible;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<MaslowService>> {
@@ -18,6 +23,7 @@ pub fn router() -> Router<Arc<MaslowService>> {
         .route("/v1/jobs/current:pause", post(pause_job))
         .route("/v1/jobs/current:resume", post(resume_job))
         .route("/v1/jobs/current:stop", post(stop_job))
+        .route("/v1/jobs/current:watch", get(watch_job_progress))
 }
 
 /// Latest known job state, or an idle placeholder when no job has ever run on
@@ -63,4 +69,12 @@ async fn resume_job(State(svc): State<Arc<MaslowService>>) -> Result<Json<pb::Jo
 async fn stop_job(State(svc): State<Arc<MaslowService>>) -> Result<Json<pb::Job>, ApiError> {
     svc.stop_job().await.map_err(ApiError::internal)?;
     Ok(Json(current_job(&svc)))
+}
+
+/// SSE equivalent of the gRPC `WatchJobProgress` streaming RPC, built on the
+/// same `grpc::stream::job_progress_stream` adapter so the job-progress
+/// filtering logic is not duplicated per transport.
+async fn watch_job_progress(State(svc): State<Arc<MaslowService>>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = svc.events.subscribe();
+    json_event_stream(stream::job_progress_stream(rx))
 }

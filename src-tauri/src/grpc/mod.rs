@@ -8,6 +8,7 @@ pub mod convert;
 pub mod files;
 pub mod job;
 pub mod machine;
+pub mod stream;
 
 use crate::proto::maslow::v1::calibration_service_server::CalibrationServiceServer;
 use crate::proto::maslow::v1::config_service_server::ConfigServiceServer;
