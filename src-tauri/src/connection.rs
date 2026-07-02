@@ -76,6 +76,12 @@ pub struct ConnState {
     /// firmware cores, and hammering it with concurrent traffic during that
     /// window can corrupt the write (the embedded UI disables its ping too).
     pub upload_active: Arc<AtomicBool>,
+    /// Host of the current WebSocket connection, if any. The frontend already
+    /// knows its own connection's host and passes it explicitly on every HTTP
+    /// call; this exists so a transport that only has a `MaslowService` handle
+    /// (gRPC/HTTP/MCP) can still reach the machine's HTTP API without the
+    /// caller having to repeat the host on every file operation.
+    pub connected_host: Mutex<Option<String>>,
 }
 
 #[tauri::command]

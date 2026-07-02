@@ -92,8 +92,6 @@ message HomeRequest {}
 message HomeResponse {}
 message UnlockRequest {}
 message UnlockResponse {}
-message ResetAlarmRequest {}
-message ResetAlarmResponse {}
 message HoldRequest {}
 message HoldResponse {}
 message ResumeRequest {}
@@ -113,6 +111,8 @@ message TakeSlackRequest {}
 message TakeSlackResponse {}
 message ComplyRequest {}
 message ComplyResponse {}
+message CalibrateRequest {}
+message CalibrateResponse {}
 message StopRequest {}
 message StopResponse {}
 message EStopRequest {}
@@ -172,7 +172,6 @@ service MachineService {
   rpc Jog(JogRequest) returns (JogResponse);
   rpc Home(HomeRequest) returns (HomeResponse);
   rpc Unlock(UnlockRequest) returns (UnlockResponse);
-  rpc ResetAlarm(ResetAlarmRequest) returns (ResetAlarmResponse);
   rpc Hold(HoldRequest) returns (HoldResponse);
   rpc Resume(ResumeRequest) returns (ResumeResponse);
   rpc Zero(ZeroRequest) returns (ZeroResponse);
@@ -180,6 +179,7 @@ service MachineService {
   rpc Extend(ExtendRequest) returns (ExtendResponse);
   rpc TakeSlack(TakeSlackRequest) returns (TakeSlackResponse);
   rpc Comply(ComplyRequest) returns (ComplyResponse);
+  rpc Calibrate(CalibrateRequest) returns (CalibrateResponse);
   rpc Stop(StopRequest) returns (StopResponse);
   rpc EStop(EStopRequest) returns (EStopResponse);
 

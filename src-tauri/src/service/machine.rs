@@ -69,6 +69,7 @@ impl MaslowService {
 
         let (tx, rx) = mpsc::unbounded_channel::<WsCommand>();
         *self.conn.tx.lock().await = Some(tx);
+        *self.conn.connected_host.lock().await = Some(host.trim().to_string());
 
         let upload_active = self.conn.upload_active.clone();
         let app = self.app.clone();
@@ -133,5 +134,95 @@ impl MaslowService {
     /// `config-dump` (+ derived `maslow-anchors`) events.
     pub async fn request_config_dump(&self) -> Result<(), String> {
         self.send_cmd(WsCommand::DumpConfig).await
+    }
+
+    // --- Action convenience methods ----------------------------------------
+    //
+    // Thin wrappers around `send_line`/`send_realtime` that build the exact
+    // command string the firmware expects for each action. Kept here (rather
+    // than inline in the gRPC layer) so every transport adapter (gRPC/HTTP/MCP)
+    // shares the same, single source of truth for command strings, matching
+    // what the frontend already sends for the equivalent UI button.
+
+    pub async fn home(&self) -> Result<(), String> {
+        self.send_line("$H".to_string()).await
+    }
+
+    pub async fn unlock(&self) -> Result<(), String> {
+        self.send_line("$X".to_string()).await
+    }
+
+    /// Feed-hold: realtime `!`.
+    pub async fn hold(&self) -> Result<(), String> {
+        self.send_realtime(0x21).await
+    }
+
+    /// Cycle-resume: realtime `~`.
+    pub async fn resume(&self) -> Result<(), String> {
+        self.send_realtime(0x7e).await
+    }
+
+    /// Zero the given axes (`G10 L20 P0 ...`). An empty list means the bulk
+    /// X+Y zero the frontend's "zero" button sends (Z is deliberately excluded
+    /// there; zeroing Z is only ever done per-axis, one letter at a time).
+    pub async fn zero(&self, axes: Vec<String>) -> Result<(), String> {
+        let axes = if axes.is_empty() {
+            vec!["X".to_string(), "Y".to_string()]
+        } else {
+            axes
+        };
+        let terms: Vec<String> = axes.iter().map(|a| format!("{}0", a.to_uppercase())).collect();
+        self.send_line(format!("G10 L20 P0 {}", terms.join(" "))).await
+    }
+
+    pub async fn retract(&self) -> Result<(), String> {
+        self.send_line("$ALL".to_string()).await
+    }
+
+    pub async fn extend(&self) -> Result<(), String> {
+        self.send_line("$EXT".to_string()).await
+    }
+
+    pub async fn take_slack(&self) -> Result<(), String> {
+        self.send_line("$TKSLK".to_string()).await
+    }
+
+    pub async fn comply(&self) -> Result<(), String> {
+        self.send_line("$CMP".to_string()).await
+    }
+
+    pub async fn calibrate(&self) -> Result<(), String> {
+        self.send_line("$CAL".to_string()).await
+    }
+
+    pub async fn stop(&self) -> Result<(), String> {
+        self.send_line("$STOP".to_string()).await
+    }
+
+    /// The latching Maslow belt e-stop, distinct from the always-reachable
+    /// realtime soft-reset (0x18) already covered by `send_realtime`.
+    pub async fn estop(&self) -> Result<(), String> {
+        self.send_line("$ESTOP".to_string()).await
+    }
+
+    /// Jog by the given relative distances (mm) at the given feed rate.
+    /// Builds `$J=G91 G21 <axis terms> F<feed>`, including only the axes with
+    /// a non-zero delta, concatenated with no separator between terms (e.g.
+    /// `X10Y-5`), matching the frontend's jog command format.
+    pub async fn jog(&self, dx: f64, dy: f64, dz: f64, feed: f64) -> Result<(), String> {
+        let mut terms = String::new();
+        if dx != 0.0 {
+            terms.push_str(&format!("X{dx}"));
+        }
+        if dy != 0.0 {
+            terms.push_str(&format!("Y{dy}"));
+        }
+        if dz != 0.0 {
+            terms.push_str(&format!("Z{dz}"));
+        }
+        if terms.is_empty() {
+            return Err("jog requires at least one non-zero axis".to_string());
+        }
+        self.send_line(format!("$J=G91 G21 {terms} F{feed}")).await
     }
 }

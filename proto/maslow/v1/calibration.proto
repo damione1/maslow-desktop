@@ -77,9 +77,10 @@ message FirmwareFit {
 
 message SolveCalibrationRequest {
   repeated Measurement measurements = 1;
-  // Starting guess. If unset, the solver falls back to the firmware default
-  // frame (or the current config anchors, when available to the caller).
-  optional AnchorParams initial = 2;
+  // Starting guess, as frame anchors (matching what a config dump provides),
+  // not the solver's internal 5-parameter form. If unset, the solver falls
+  // back to the firmware default frame.
+  optional Anchors initial = 2;
   // Zero-based measurement indices to exclude from the solve (what-if
   // waypoint exclusion), without touching the machine.
   repeated uint32 exclude = 3;
