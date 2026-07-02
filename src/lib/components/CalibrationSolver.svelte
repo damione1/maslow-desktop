@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
-  import { connection } from "$lib/stores/connection";
   import { jobProgress } from "$lib/stores/job";
   import {
     measurements,
@@ -85,16 +84,14 @@
     busy = true;
     error = "";
     message = "";
-    const host = $connection.host;
     try {
       for (const [key, path] of ANCHOR_PATHS) {
-        await invoke("write_maslow_setting", {
-          host,
+        await invoke("ws_write_setting", {
           path,
           value: String(solve.params[key]),
         });
       }
-      await invoke("save_maslow_config", { host });
+      await invoke("ws_save_config");
       message = "Anchors written to machine flash.";
       await refreshAnchors();
     } catch (e) {

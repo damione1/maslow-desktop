@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
-  import { connection } from "$lib/stores/connection";
   import { jobProgress } from "$lib/stores/job";
   import { fullConfig, refreshConfig, anchors } from "$lib/stores/maslow";
   import { configEntry } from "$lib/stores/config";
@@ -152,16 +151,14 @@
     busy = true;
     error = "";
     message = "";
-    const host = $connection.host;
     try {
       for (const f of dirtyPaths) {
-        await invoke("write_maslow_setting", {
-          host,
+        await invoke("ws_write_setting", {
           path: f.path,
           value: cur(f.path),
         });
       }
-      await invoke("save_maslow_config", { host });
+      await invoke("ws_save_config");
       message = "Saved to machine flash.";
       await load();
     } catch (e) {

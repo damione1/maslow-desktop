@@ -20,16 +20,22 @@ use crate::maslow;
 use crate::streaming::{self, Job};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+/// Timeout for a tracked write's firmware reply. FluidNC answers in order and
+/// well within this window in normal operation; a slower answer usually means
+/// the socket has gone quiet.
+const TRACKED_WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 
 type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 
@@ -39,6 +45,14 @@ pub enum WsCommand {
     Line(String),
     /// A single realtime character (e.g. '?', '!', '~', 0x18) sent as-is.
     Realtime(u8),
+    /// A `$`/`$/` line whose firmware `ok`/`error:N` reply is tracked and
+    /// reported back to the caller (used for setting writes and `$CO`, whose
+    /// HTTP counterpart cannot see the real result: FluidNC routes the answer
+    /// to the WS channel that owns the page id, not the HTTP body).
+    TrackedLine {
+        line: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// Start streaming a parsed G-code file from `start_index`.
     StartJob {
         lines: Vec<String>,
@@ -139,6 +153,38 @@ pub async fn send_line(state: State<'_, ConnState>, line: String) -> Result<(), 
 #[tauri::command]
 pub async fn send_realtime(state: State<'_, ConnState>, byte: u8) -> Result<(), String> {
     send_cmd(&state, WsCommand::Realtime(byte)).await
+}
+
+/// Send a line over the WS and wait for the firmware's own `ok`/`error:N` reply,
+/// rather than the HTTP `/command` endpoint's body (which is empty for anything
+/// other than `[ESP...]` commands: FluidNC forwards `$`/`$/` output to the WS
+/// channel matching the request's page id instead of the HTTP response).
+async fn tracked_send(state: &State<'_, ConnState>, line: String) -> Result<(), String> {
+    let (reply, rx) = oneshot::channel();
+    send_cmd(state, WsCommand::TrackedLine { line, reply }).await?;
+    match tokio::time::timeout(TRACKED_WRITE_TIMEOUT, rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("connection closed before the machine replied".to_string()),
+        Err(_) => Err("timeout waiting for machine reply".to_string()),
+    }
+}
+
+/// Write a single FluidNC setting: `$/<path>=<value>`. `path` is the full
+/// config path (e.g. `Maslow_Work_Area_X` or `kinematics/MaslowKinematics/tlX`).
+#[tauri::command]
+pub async fn ws_write_setting(
+    state: State<'_, ConnState>,
+    path: String,
+    value: String,
+) -> Result<(), String> {
+    tracked_send(&state, format!("$/{path}={value}")).await
+}
+
+/// Persist the current (runtime-edited) config to flash via `$CO`
+/// (Config/Overwrite). Without this, edited settings are lost on reboot.
+#[tauri::command]
+pub async fn ws_save_config(state: State<'_, ConnState>) -> Result<(), String> {
+    tracked_send(&state, "$CO".to_string()).await
 }
 
 /// Request a full config dump over the WS. The result arrives asynchronously as
@@ -371,7 +417,7 @@ async fn run_socket(
                             // This line will return one ok/error; account for it
                             // so it is never miscounted against a job that starts
                             // moments later.
-                            ctx.pending_acks += 1;
+                            ctx.pending.push_back(PendingAck::Untracked);
                             if is_action {
                                 // Reflect the new firmware state ASAP: ask for it
                                 // right now (one $MINFO + $GSTATE, queued right
@@ -382,9 +428,24 @@ async fn run_socket(
                                 // counting only mid-job, which can't happen here.
                                 let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
                                 let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
-                                ctx.pending_acks += 2;
+                                ctx.pending.push_back(PendingAck::Untracked);
+                                ctx.pending.push_back(PendingAck::Untracked);
                                 burst_remaining = BURST_POLLS;
                                 maslow_burst.reset();
+                            }
+                        }
+                    }
+                    Some(WsCommand::TrackedLine { line, reply }) => {
+                        if let Some(reason) = tracked_line_rejected(job_active(job)) {
+                            let _ = reply.send(Err(reason.to_string()));
+                        } else {
+                            let mut l = line;
+                            if !l.ends_with('\n') { l.push('\n'); }
+                            match write.send(Message::Text(l)).await {
+                                Ok(()) => ctx.pending.push_back(PendingAck::Tracked(reply)),
+                                Err(e) => {
+                                    let _ = reply.send(Err(e.to_string()));
+                                }
                             }
                         }
                     }
@@ -452,9 +513,11 @@ async fn run_socket(
                             ctx.capture_started = Some(Instant::now());
                             burst_remaining = 0;
                             // The capture branch consumes the dump's terminating
-                            // ok itself; clear any pending poll acks so they can't
-                            // be confused with it.
-                            ctx.pending_acks = 0;
+                            // ok itself; clear any pending poll/tracked-write acks
+                            // so they can't be confused with it (a tracked write
+                            // still waiting resolves as an error rather than
+                            // hanging until its timeout).
+                            clear_pending(&mut ctx.pending, "superseded by a config dump");
                             write.send(Message::Text("$CD\n".to_string()))
                                 .await.map_err(|e| e.to_string())?;
                         }
@@ -511,7 +574,8 @@ async fn run_socket(
                     // the long `$Maslow/getInfo` form is rejected by the firmware.
                     let _ = write.send(Message::Text("$MINFO\n".to_string())).await;
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
-                    ctx.pending_acks += 2;
+                    ctx.pending.push_back(PendingAck::Untracked);
+                    ctx.pending.push_back(PendingAck::Untracked);
                 }
             }
             _ = maslow_burst.tick(), if burst_remaining > 0 => {
@@ -522,7 +586,7 @@ async fn run_socket(
                     && !job_active(job)
                     && !machine_running_unowned_job(&ctx) {
                     let _ = write.send(Message::Text("$GSTATE\n".to_string())).await;
-                    ctx.pending_acks += 1;
+                    ctx.pending.push_back(PendingAck::Untracked);
                 }
                 burst_remaining -= 1;
             }
@@ -540,11 +604,11 @@ async fn handle_incoming(
     job: &mut Option<Job>,
 ) -> Result<(), String> {
     if let Some(is_error) = ack_kind(line) {
-        if ctx.pending_acks > 0 {
-            // This ack belongs to a poll/manual command we issued out-of-band,
-            // not to a streamed line. Consume it so it cannot drift the cursor.
-            ctx.pending_acks -= 1;
-        } else if job_active(job) {
+        // This ack may belong to a poll/manual/tracked command we issued
+        // out-of-band, not to a streamed line. Consume it in FIFO order so it
+        // cannot drift the job's char-counting cursor.
+        let consumed_out_of_band = resolve_pending_ack(&mut ctx.pending, is_error, line);
+        if !consumed_out_of_band && job_active(job) {
             let done = job.as_mut().map(|j| j.ack(is_error)).unwrap_or(false);
             if let Some(j) = job.as_mut() {
                 streaming::maybe_persist(app, j);
@@ -587,6 +651,60 @@ fn ack_kind(line: &str) -> Option<bool> {
     }
 }
 
+/// One outstanding non-job command awaiting its firmware `ok`/`error`, kept in
+/// the FIFO queue described on `SocketCtx::pending`.
+enum PendingAck {
+    /// A poll or fire-and-forget manual line: its reply is simply swallowed.
+    Untracked,
+    /// A `ws_write_setting`/`ws_save_config` call awaiting the real result.
+    Tracked(oneshot::Sender<Result<(), String>>),
+}
+
+/// Resolve the oldest pending expectation against an incoming ok/error line, in
+/// strict FIFO order. Returns `true` if `line` was consumed this way, meaning
+/// the job-ack path must not also treat it as a streamed-line ack; `false`
+/// means nothing was pending (fall through to job-ack handling, if any).
+fn resolve_pending_ack(pending: &mut VecDeque<PendingAck>, is_error: bool, line: &str) -> bool {
+    match pending.pop_front() {
+        Some(PendingAck::Untracked) => true,
+        Some(PendingAck::Tracked(reply)) => {
+            let result = if is_error {
+                Err(line.trim().to_string())
+            } else {
+                Ok(())
+            };
+            let _ = reply.send(result);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Drop every outstanding expectation, resolving any tracked write with
+/// `reason` so its caller does not hang until the timeout. Used when a `$CD`
+/// dump is about to start: its own terminating ok/error must not be confused
+/// with an earlier command's, and a write that raced it cannot be trusted to
+/// still line up afterwards.
+fn clear_pending(pending: &mut VecDeque<PendingAck>, reason: &str) {
+    for p in pending.drain(..) {
+        if let PendingAck::Tracked(reply) = p {
+            let _ = reply.send(Err(reason.to_string()));
+        }
+    }
+}
+
+/// Whether a `TrackedLine` command must be rejected without ever touching the
+/// socket: mirrors the same rule as `WsCommand::Line` (a job owns the
+/// character-counted stream while it runs, so no other command may interleave
+/// with it).
+fn tracked_line_rejected(job_active: bool) -> Option<&'static str> {
+    if job_active {
+        Some("a job is streaming")
+    } else {
+        None
+    }
+}
+
 /// A control message is "KEY:..." for a known uppercase key, not a `[MSG:...]`
 /// bracketed GRBL message.
 fn is_control(line: &str) -> bool {
@@ -618,12 +736,15 @@ struct SocketCtx {
     capture: Option<Vec<String>>,
     /// Start time of the in-flight capture, for the timeout guard.
     capture_started: Option<Instant>,
-    /// Count of `ok`/`error` responses still expected from commands we issued
-    /// that are NOT job lines (the `$MINFO`/`$GSTATE` polls, the burst poll, and
-    /// any manual/action line). The job ack handler swallows exactly these so a
-    /// stray poll ack landing right as a job starts can never be miscounted as a
-    /// streamed-line ack and drift the char-counting cursor.
-    pending_acks: usize,
+    /// `ok`/`error` responses still expected from commands we issued that are
+    /// NOT job lines (the `$MINFO`/`$GSTATE` polls, the burst poll, any
+    /// manual/action line, and tracked writes), in strict FIFO order (the
+    /// firmware always answers in the order it received the lines). The job
+    /// ack handler swallows exactly these so a stray poll ack landing right as
+    /// a job starts can never be miscounted as a streamed-line ack and drift
+    /// the char-counting cursor. A `Tracked` entry additionally carries the
+    /// oneshot responder for a `ws_write_setting`/`ws_save_config` call.
+    pending: VecDeque<PendingAck>,
     /// Set once `maslow-cal-complete` has been emitted for the calibration run
     /// currently ending, so the "Find Anchors complete" log line (which always
     /// follows the state-transition report on the wire) does not re-fire it.
@@ -836,5 +957,84 @@ fn finalize_config_dump(app: &AppHandle, yaml: &str) {
     let _ = app.emit("config-dump", &entries);
     if let Some(anchors) = maslow::parse_anchors(&synthetic) {
         let _ = app.emit("maslow-anchors", &anchors);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracked_write_ok_resolves_ok() {
+        let mut pending = VecDeque::new();
+        let (reply, mut rx) = oneshot::channel();
+        pending.push_back(PendingAck::Tracked(reply));
+
+        assert!(resolve_pending_ack(&mut pending, false, "ok"));
+        assert!(pending.is_empty());
+        match rx.try_recv() {
+            Ok(result) => assert_eq!(result, Ok(())),
+            Err(e) => panic!("expected a reply, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn tracked_write_error_surfaces_firmware_text() {
+        let mut pending = VecDeque::new();
+        let (reply, mut rx) = oneshot::channel();
+        pending.push_back(PendingAck::Tracked(reply));
+
+        assert!(resolve_pending_ack(&mut pending, true, "error:3"));
+        match rx.try_recv() {
+            Ok(result) => assert_eq!(result, Err("error:3".to_string())),
+            Err(e) => panic!("expected a reply, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn tracked_write_rejected_while_job_active() {
+        // Mirrors the `WsCommand::Line` guard: a job owns the socket, so a
+        // tracked write must be refused before it ever reaches the socket.
+        assert_eq!(tracked_line_rejected(true), Some("a job is streaming"));
+        assert_eq!(tracked_line_rejected(false), None);
+    }
+
+    #[test]
+    fn fifo_order_is_preserved_across_mixed_entries() {
+        // An untracked poll ack ahead of a tracked write must be consumed
+        // first, leaving the tracked entry to match the next ok/error.
+        let mut pending = VecDeque::new();
+        pending.push_back(PendingAck::Untracked);
+        let (reply, mut rx) = oneshot::channel();
+        pending.push_back(PendingAck::Tracked(reply));
+
+        assert!(resolve_pending_ack(&mut pending, false, "ok"));
+        assert_eq!(pending.len(), 1);
+        assert!(resolve_pending_ack(&mut pending, true, "error:9"));
+        match rx.try_recv() {
+            Ok(result) => assert_eq!(result, Err("error:9".to_string())),
+            Err(e) => panic!("expected a reply, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn no_pending_entry_falls_through() {
+        let mut pending = VecDeque::new();
+        assert!(!resolve_pending_ack(&mut pending, false, "ok"));
+    }
+
+    #[test]
+    fn clear_pending_resolves_tracked_entries_with_reason() {
+        let mut pending = VecDeque::new();
+        pending.push_back(PendingAck::Untracked);
+        let (reply, mut rx) = oneshot::channel();
+        pending.push_back(PendingAck::Tracked(reply));
+
+        clear_pending(&mut pending, "superseded by a config dump");
+        assert!(pending.is_empty());
+        match rx.try_recv() {
+            Ok(result) => assert_eq!(result, Err("superseded by a config dump".to_string())),
+            Err(e) => panic!("expected a reply, got {e:?}"),
+        }
     }
 }

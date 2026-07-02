@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { wsState } from "$lib/stores/machine";
-  import { connection } from "$lib/stores/connection";
   import { jobProgress } from "$lib/stores/job";
   import {
     fullConfig,
@@ -71,13 +70,11 @@
     busy = true;
     error = "";
     message = "";
-    const host = $connection.host;
     try {
       let written = 0;
       for (const e of cfg) {
         if (isDirty(e)) {
-          await invoke("write_maslow_setting", {
-            host,
+          await invoke("ws_write_setting", {
             path: e.path,
             value: draft[e.path],
           });
@@ -85,7 +82,7 @@
         }
       }
       if (written > 0) {
-        await invoke("save_maslow_config", { host });
+        await invoke("ws_save_config");
       }
       message = written > 0 ? `Wrote ${written} setting(s) to flash.` : "No changes.";
       await load();
