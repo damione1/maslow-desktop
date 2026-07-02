@@ -3,6 +3,7 @@ mod connection;
 mod fluidnc;
 mod grbl;
 mod grpc;
+mod http;
 mod http_api;
 mod maslow;
 #[allow(clippy::all)]
@@ -23,7 +24,8 @@ pub fn run() {
         .setup(|app| {
             let svc = Arc::new(MaslowService::new(app.handle().clone()));
             app.manage(svc.clone());
-            grpc::spawn_server(svc);
+            grpc::spawn_server(svc.clone());
+            http::spawn_server(svc);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
