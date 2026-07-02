@@ -5,9 +5,10 @@
 //   GET/POST /upload           -> SD card file operations
 // In Phase 0 we only need a connectivity test.
 
-use crate::connection::ConnState;
+use crate::service::machine::MaslowService;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
 
@@ -106,7 +107,7 @@ async fn sd_free_bytes(client: &reqwest::Client, base: &str, dir: &str) -> Optio
 /// matching the ESP3D form: `path`, `<fullpath>S` = size, `myfile[]` = file.
 #[tauri::command]
 pub async fn upload_file(
-    state: State<'_, ConnState>,
+    state: State<'_, Arc<MaslowService>>,
     host: String,
     dir: String,
     local_path: String,
@@ -149,7 +150,7 @@ pub async fn upload_file(
     // write stalls both cores, and concurrent traffic during that window can
     // corrupt the write (the embedded UI disables its ping the same way). The
     // guard restores polling even if the upload errors out.
-    let upload_active = state.upload_active.clone();
+    let upload_active = state.conn.upload_active.clone();
     upload_active.store(true, Ordering::Relaxed);
     let result = async {
         let resp = client

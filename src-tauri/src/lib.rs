@@ -4,17 +4,23 @@ mod fluidnc;
 mod grbl;
 mod http_api;
 mod maslow;
+mod service;
 mod streaming;
 mod toolpath;
 
-use connection::ConnState;
+use service::machine::MaslowService;
+use std::sync::Arc;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(ConnState::default())
+        .setup(|app| {
+            app.manage(Arc::new(MaslowService::new(app.handle().clone())));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             calibration::solve_calibration,
             toolpath::load_toolpath,

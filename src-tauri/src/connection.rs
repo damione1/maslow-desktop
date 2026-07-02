@@ -17,6 +17,7 @@
 use crate::calibration;
 use crate::grbl;
 use crate::maslow;
+use crate::service::machine::MaslowService;
 use crate::streaming::{self, Job};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -26,16 +27,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, Mutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-
-/// Timeout for a tracked write's firmware reply. FluidNC answers in order and
-/// well within this window in normal operation; a slower answer usually means
-/// the socket has gone quiet.
-const TRACKED_WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 
 type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 
@@ -81,117 +77,43 @@ pub struct ConnState {
     pub upload_active: Arc<AtomicBool>,
 }
 
-/// Build the WebSocket URL. FluidNC serves the socket on (web port + 1),
-/// i.e. port 81 by default, at the root path — verified against a real Maslow M4.
-fn ws_url(host: &str) -> String {
-    let h = host
-        .trim()
-        .trim_end_matches('/')
-        .trim_start_matches("http://")
-        .trim_start_matches("https://");
-    if h.contains(':') {
-        format!("ws://{}/", h)
-    } else {
-        format!("ws://{}:81/", h)
-    }
+#[tauri::command]
+pub async fn connect_ws(state: State<'_, Arc<MaslowService>>, host: String) -> Result<(), String> {
+    state.connect(host).await
 }
 
 #[tauri::command]
-pub async fn connect_ws(
-    app: AppHandle,
-    state: State<'_, ConnState>,
-    host: String,
-) -> Result<(), String> {
-    // Reject a malformed host up front. A bad URL can never connect, and the
-    // reconnect loop would otherwise retry it every few seconds and spam the
-    // console with "invalid uri character". Validate before touching any
-    // existing connection so a typo cannot drop a working one.
-    let url = ws_url(&host);
-    url.as_str()
-        .into_client_request()
-        .map_err(|e| format!("invalid host \"{}\": {e}", host.trim()))?;
-
-    if let Some(flag) = state.current.lock().await.take() {
-        flag.store(false, Ordering::SeqCst);
-    }
-
-    let running = Arc::new(AtomicBool::new(true));
-    *state.current.lock().await = Some(running.clone());
-
-    let (tx, rx) = mpsc::unbounded_channel::<WsCommand>();
-    *state.tx.lock().await = Some(tx);
-
-    let upload_active = state.upload_active.clone();
-    tokio::spawn(async move {
-        connection_loop(app, url, rx, running, upload_active).await;
-    });
-    Ok(())
+pub async fn disconnect_ws(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
+    state.disconnect().await
 }
 
 #[tauri::command]
-pub async fn disconnect_ws(state: State<'_, ConnState>) -> Result<(), String> {
-    if let Some(flag) = state.current.lock().await.take() {
-        flag.store(false, Ordering::SeqCst);
-    }
-    *state.tx.lock().await = None;
-    Ok(())
-}
-
-async fn send_cmd(state: &State<'_, ConnState>, cmd: WsCommand) -> Result<(), String> {
-    let guard = state.tx.lock().await;
-    match guard.as_ref() {
-        Some(tx) => tx.send(cmd).map_err(|e| e.to_string()),
-        None => Err("not connected".into()),
-    }
+pub async fn send_line(state: State<'_, Arc<MaslowService>>, line: String) -> Result<(), String> {
+    state.send_line(line).await
 }
 
 #[tauri::command]
-pub async fn send_line(state: State<'_, ConnState>, line: String) -> Result<(), String> {
-    send_cmd(&state, WsCommand::Line(line)).await
+pub async fn send_realtime(state: State<'_, Arc<MaslowService>>, byte: u8) -> Result<(), String> {
+    state.send_realtime(byte).await
 }
 
-#[tauri::command]
-pub async fn send_realtime(state: State<'_, ConnState>, byte: u8) -> Result<(), String> {
-    send_cmd(&state, WsCommand::Realtime(byte)).await
-}
-
-/// Send a line over the WS and wait for the firmware's own `ok`/`error:N` reply,
-/// rather than the HTTP `/command` endpoint's body (which is empty for anything
-/// other than `[ESP...]` commands: FluidNC forwards `$`/`$/` output to the WS
-/// channel matching the request's page id instead of the HTTP response).
-async fn tracked_send(state: &State<'_, ConnState>, line: String) -> Result<(), String> {
-    let (reply, rx) = oneshot::channel();
-    send_cmd(state, WsCommand::TrackedLine { line, reply }).await?;
-    match tokio::time::timeout(TRACKED_WRITE_TIMEOUT, rx).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(_)) => Err("connection closed before the machine replied".to_string()),
-        Err(_) => Err("timeout waiting for machine reply".to_string()),
-    }
-}
-
-/// Write a single FluidNC setting: `$/<path>=<value>`. `path` is the full
-/// config path (e.g. `Maslow_Work_Area_X` or `kinematics/MaslowKinematics/tlX`).
 #[tauri::command]
 pub async fn ws_write_setting(
-    state: State<'_, ConnState>,
+    state: State<'_, Arc<MaslowService>>,
     path: String,
     value: String,
 ) -> Result<(), String> {
-    tracked_send(&state, format!("$/{path}={value}")).await
+    state.write_setting(path, value).await
 }
 
-/// Persist the current (runtime-edited) config to flash via `$CO`
-/// (Config/Overwrite). Without this, edited settings are lost on reboot.
 #[tauri::command]
-pub async fn ws_save_config(state: State<'_, ConnState>) -> Result<(), String> {
-    tracked_send(&state, "$CO".to_string()).await
+pub async fn ws_save_config(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
+    state.save_config().await
 }
 
-/// Request a full config dump over the WS. The result arrives asynchronously as
-/// `config-dump` (+ derived `maslow-anchors`) events.
 #[tauri::command]
-pub async fn request_config_dump(state: State<'_, ConnState>) -> Result<(), String> {
-    send_cmd(&state, WsCommand::DumpConfig).await
+pub async fn request_config_dump(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
+    state.request_config_dump().await
 }
 
 /// Begin streaming a G-code file. Loaded and parsed here so the frontend only
@@ -200,7 +122,7 @@ pub async fn request_config_dump(state: State<'_, ConnState>) -> Result<(), Stri
 /// runtime that also drives the WebSocket connection loop.
 #[tauri::command]
 pub async fn stream_start(
-    state: State<'_, ConnState>,
+    state: State<'_, Arc<MaslowService>>,
     path: String,
     start_index: usize,
 ) -> Result<usize, String> {
@@ -209,31 +131,29 @@ pub async fn stream_start(
         .await
         .map_err(|e| format!("stream_start join: {e}"))??;
     let total = lines.len();
-    send_cmd(
-        &state,
-        WsCommand::StartJob {
+    state
+        .send_cmd(WsCommand::StartJob {
             lines,
             path,
             start_index,
-        },
-    )
-    .await?;
+        })
+        .await?;
     Ok(total)
 }
 
 #[tauri::command]
-pub async fn stream_pause(state: State<'_, ConnState>) -> Result<(), String> {
-    send_cmd(&state, WsCommand::PauseJob).await
+pub async fn stream_pause(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
+    state.send_cmd(WsCommand::PauseJob).await
 }
 
 #[tauri::command]
-pub async fn stream_resume(state: State<'_, ConnState>) -> Result<(), String> {
-    send_cmd(&state, WsCommand::ResumeJob).await
+pub async fn stream_resume(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
+    state.send_cmd(WsCommand::ResumeJob).await
 }
 
 #[tauri::command]
-pub async fn stream_stop(state: State<'_, ConnState>) -> Result<(), String> {
-    send_cmd(&state, WsCommand::StopJob).await
+pub async fn stream_stop(state: State<'_, Arc<MaslowService>>) -> Result<(), String> {
+    state.send_cmd(WsCommand::StopJob).await
 }
 
 /// Return a previously interrupted job persisted on disk, if resumable.
@@ -242,7 +162,7 @@ pub fn stream_saved(app: AppHandle) -> Option<streaming::SavedJob> {
     streaming::read_saved(&app)
 }
 
-async fn connection_loop(
+pub(crate) async fn connection_loop(
     app: AppHandle,
     url: String,
     mut rx: UnboundedReceiver<WsCommand>,
