@@ -10,6 +10,7 @@ const TAB_KEY = "maslow.ui.tab";
 const SUBTAB_KEY = "maslow.ui.mainSubTab";
 const COLLAPSED_KEY = "maslow.ui.consoleCollapsed";
 const HEIGHT_KEY = "maslow.ui.consoleHeight";
+const GCODE_LIST_OPEN_KEY = "maslow.ui.gcodeListOpen";
 
 export const CONSOLE_MIN_HEIGHT = 96;
 export const CONSOLE_DEFAULT_HEIGHT = 220;
@@ -39,6 +40,10 @@ function loadHeight(): number {
   return Number.isFinite(n) && n >= CONSOLE_MIN_HEIGHT ? n : CONSOLE_DEFAULT_HEIGHT;
 }
 
+function loadGcodeListOpen(): boolean {
+  return hasStorage ? localStorage.getItem(GCODE_LIST_OPEN_KEY) === "1" : false;
+}
+
 /** Active top-level tab. Persisted across reloads. */
 export const activeTab = writable<Tab>(loadTab());
 /** Active sub-tab within MAIN. Persisted across reloads. */
@@ -47,10 +52,14 @@ export const mainSubTab = writable<MainSubTab>(loadSubTab());
 export const consoleCollapsed = writable<boolean>(loadCollapsed());
 /** Expanded console dock height in px (clamped on resize). */
 export const consoleHeight = writable<number>(loadHeight());
+/** Whether the G-code line list panel is expanded. Defaults closed: it mounts
+ * thousands of rows only when the operator actually wants to see them. */
+export const gcodeListOpen = writable<boolean>(loadGcodeListOpen());
 
 if (hasStorage) {
   activeTab.subscribe((v) => localStorage.setItem(TAB_KEY, v));
   mainSubTab.subscribe((v) => localStorage.setItem(SUBTAB_KEY, v));
   consoleCollapsed.subscribe((v) => localStorage.setItem(COLLAPSED_KEY, v ? "1" : "0"));
   consoleHeight.subscribe((v) => localStorage.setItem(HEIGHT_KEY, String(Math.round(v))));
+  gcodeListOpen.subscribe((v) => localStorage.setItem(GCODE_LIST_OPEN_KEY, v ? "1" : "0"));
 }

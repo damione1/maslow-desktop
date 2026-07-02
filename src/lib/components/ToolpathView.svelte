@@ -61,6 +61,19 @@
     };
   });
 
+  // A fast-streaming job can emit stream-progress many times per second; coalesce
+  // redraws to at most one per animation frame so a burst of acks doesn't repaint
+  // the whole path (every segment) once per event.
+  let rafScheduled = false;
+  function scheduleDraw() {
+    if (rafScheduled) return;
+    rafScheduled = true;
+    requestAnimationFrame(() => {
+      rafScheduled = false;
+      draw();
+    });
+  }
+
   // Keep the backing store matched to the rendered box (responsive + HiDPI).
   $effect(() => {
     if (!canvas || !wrap) return;
@@ -73,7 +86,7 @@
   // Redraw on any data change.
   $effect(() => {
     void [$toolpath, progressLine, view, tool, machineRect];
-    draw();
+    scheduleDraw();
   });
 
   function sizeAndDraw() {
@@ -84,7 +97,7 @@
     canvas.style.height = `${h}px`;
     canvas.width = Math.floor(w * dpr);
     canvas.height = Math.floor(h * dpr);
-    draw();
+    scheduleDraw();
   }
 
   function draw() {

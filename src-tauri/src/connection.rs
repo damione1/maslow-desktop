@@ -195,14 +195,19 @@ pub async fn request_config_dump(state: State<'_, ConnState>) -> Result<(), Stri
 }
 
 /// Begin streaming a G-code file. Loaded and parsed here so the frontend only
-/// passes a path. `start_index` lets a previous job resume mid-file.
+/// passes a path. `start_index` lets a previous job resume mid-file. The file
+/// read runs on a blocking thread so a large file can't stall the async
+/// runtime that also drives the WebSocket connection loop.
 #[tauri::command]
 pub async fn stream_start(
     state: State<'_, ConnState>,
     path: String,
     start_index: usize,
 ) -> Result<usize, String> {
-    let lines = streaming::load_gcode(&path)?;
+    let read_path = path.clone();
+    let lines = tauri::async_runtime::spawn_blocking(move || streaming::load_gcode(&read_path))
+        .await
+        .map_err(|e| format!("stream_start join: {e}"))??;
     let total = lines.len();
     send_cmd(
         &state,
