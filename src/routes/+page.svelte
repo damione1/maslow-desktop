@@ -13,6 +13,7 @@
   import CalibrateTab from "$lib/components/tabs/CalibrateTab.svelte";
   import FilesTab from "$lib/components/tabs/FilesTab.svelte";
   import ConfigTab from "$lib/components/tabs/ConfigTab.svelte";
+  import ConfirmModal from "$lib/components/ui/ConfirmModal.svelte";
 
   onMount(() => {
     initMachineListeners();
@@ -46,6 +47,8 @@
     <StatusStrip />
   {/snippet}
 </AppFrame>
+
+<ConfirmModal />
 
 <style>
   :global(body) {

@@ -4,6 +4,7 @@
   import { connection } from "$lib/stores/connection";
   import { wsState } from "$lib/stores/machine";
   import { loadSdToolpath } from "$lib/stores/job";
+  import { confirmDialog } from "$lib/stores/confirm";
 
   const GCODE_FILTER = {
     name: "G-code",
@@ -80,7 +81,11 @@
   }
 
   async function del(name: string) {
-    if (!window.confirm(`Delete ${name} from the SD card? This cannot be undone.`))
+    if (
+      !(await confirmDialog(`Delete ${name} from the SD card? This cannot be undone.`, {
+        danger: true,
+      }))
+    )
       return;
     try {
       await invoke("delete_file", {

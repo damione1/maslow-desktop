@@ -4,6 +4,7 @@
   import { maslowInfo, maslowState, actionPolicy, anchors, fullConfig } from "$lib/stores/maslow";
   import { isReadyToCut } from "$lib/stores/calState";
   import { CFG, configNumber } from "$lib/stores/config";
+  import { confirmDialog } from "$lib/stores/confirm";
   import Button from "$lib/components/ui/Button.svelte";
 
   const connected = $derived($wsState === "connected");
@@ -35,11 +36,11 @@
     invoke("send_line", { line: CMD[cmd] });
   }
 
-  function calibrate() {
+  async function calibrate() {
     if (
-      !window.confirm(
+      !(await confirmDialog(
         "Start calibration? The machine will drive to every measurement waypoint across the work area.",
-      )
+      ))
     )
       return;
     action("calibrate");
@@ -49,24 +50,26 @@
     const z = configNumber($fullConfig, CFG.parkZ, 2.0);
     const x = configNumber($fullConfig, CFG.parkX, 0.0);
     const y = configNumber($fullConfig, CFG.parkY, 0.0);
-    if (!window.confirm(`Park the machine? It will lift Z to ${z} then move to X${x} Y${y}.`)) return;
+    if (!(await confirmDialog(`Park the machine? It will lift Z to ${z} then move to X${x} Y${y}.`)))
+      return;
     await invoke("send_line", { line: `G90 G0 Z${z}` });
     await invoke("send_line", { line: `G53 G0 Y${y} X${x}` });
   }
 
-  function estopMaslow() {
+  async function estopMaslow() {
     if (
-      !window.confirm(
+      !(await confirmDialog(
         "Trigger the latching emergency stop? The machine will not respond until you power it off and on again.",
-      )
+        { danger: true },
+      ))
     )
       return;
     action("estop");
   }
 
   let showDiag = $state(false);
-  function diag(cmd: "test" | "setZStop" | "calReset", confirmMsg?: string) {
-    if (confirmMsg && !window.confirm(confirmMsg)) return;
+  async function diag(cmd: "test" | "setZStop" | "calReset", confirmMsg?: string) {
+    if (confirmMsg && !(await confirmDialog(confirmMsg))) return;
     action(cmd);
   }
 

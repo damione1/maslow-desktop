@@ -11,6 +11,7 @@
   import { CalState, isReadyToCut, isResumablePreCut } from "$lib/stores/calState";
   import { connection, fwVersion } from "$lib/stores/connection";
   import { supportsFullCalibration } from "$lib/stores/firmware";
+  import { confirmDialog } from "$lib/stores/confirm";
 
   // Guided layer on top of the contextual MaslowPanel. The firmware owns the
   // calibration state machine, so prerequisites/enablement come straight from
@@ -220,14 +221,14 @@
     return null;
   }
 
-  function run(cmd: string | null) {
+  async function run(cmd: string | null) {
     if (!cmd) return;
     // Calibrate drives the full measurement grid; confirm before it moves.
     if (
       cmd === "$CAL" &&
-      !window.confirm(
+      !(await confirmDialog(
         "Start calibration? The machine will drive to every measurement waypoint across the work area.",
-      )
+      ))
     )
       return;
     invoke("send_line", { line: cmd });
