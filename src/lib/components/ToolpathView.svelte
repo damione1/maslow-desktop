@@ -4,6 +4,7 @@
   import { jobProgress, toolpath, toolpathPath } from "$lib/stores/job";
   import { actionPolicy, fullConfig } from "$lib/stores/maslow";
   import { CFG, configNumber } from "$lib/stores/config";
+  import { confirmDialog } from "$lib/stores/confirm";
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let wrap: HTMLDivElement | undefined = $state();
@@ -224,9 +225,9 @@
     const wmm = (t.max_x - t.min_x).toFixed(0);
     const hmm = (t.max_y - t.min_y).toFixed(0);
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Trace boundary? The machine will move around the ${wmm}×${hmm} mm job perimeter at the current Z (Z does not move).`,
-      )
+      ))
     )
       return;
     const f = (n: number) => n.toFixed(3);

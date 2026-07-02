@@ -7,6 +7,7 @@
   import SubTabs from "$lib/components/ui/SubTabs.svelte";
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
+  import { confirmDialog } from "$lib/stores/confirm";
   import JogPad from "$lib/components/controls/JogPad.svelte";
   import BeltControls from "$lib/components/controls/BeltControls.svelte";
   import Console from "$lib/components/Console.svelte";
@@ -26,8 +27,12 @@
   // Zero X and Y only. The firmware keeps Z out of the bulk zero on purpose so the
   // router-bit height isn't redefined by accident; Z is set deliberately via the
   // per-axis Z set-home (touch-off).
-  function zeroXY() {
-    if (!window.confirm("Zero X and Y? Sets work X/Y = 0 at the current position. (Z is set separately.)"))
+  async function zeroXY() {
+    if (
+      !(await confirmDialog(
+        "Zero X and Y? Sets work X/Y = 0 at the current position. (Z is set separately.)",
+      ))
+    )
       return;
     line("G10 L20 P0 X0 Y0");
   }
@@ -41,7 +46,7 @@
   // Per-axis "Go to home": move that axis to its work zero. Confirmed (it moves).
   // For Z, warn if the resulting machine Z would leave the safe range (a wrong Z
   // home after an alarm/reset can drive the bit into the frame or the work).
-  function goAxisHome(_i: number, axis: string) {
+  async function goAxisHome(_i: number, axis: string) {
     if (axis === "Z") {
       const s = $machineStatus;
       // After G90 G0 Z0 the machine returns to the work origin, i.e. machine Z = WCO_z.
@@ -59,11 +64,12 @@
           `That can indicate a wrong Z position after an alarm or reset, and may drive the ` +
           `bit into the frame or the work. Proceed?`;
       }
-      if (!window.confirm(msg)) return;
+      if (!(await confirmDialog(msg))) return;
       line("G90 G0 Z0");
       return;
     }
-    if (!window.confirm(`Go to ${axis} home? The machine will move ${axis} to work zero.`)) return;
+    if (!(await confirmDialog(`Go to ${axis} home? The machine will move ${axis} to work zero.`)))
+      return;
     line(`G90 G0 ${axis}0`);
   }
 

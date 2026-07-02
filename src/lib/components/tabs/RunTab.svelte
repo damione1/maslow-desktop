@@ -14,6 +14,7 @@
     clearToolpath,
     type SavedJob,
   } from "$lib/stores/job";
+  import { confirmDialog } from "$lib/stores/confirm";
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import ProgressBar from "$lib/components/ui/ProgressBar.svelte";
@@ -101,9 +102,9 @@
     if (!loaded || !canRun) return;
     const where = loaded.source === "sd" ? "from the SD card" : "";
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Start cutting ${loaded.name} ${where}? The router will move — make sure the bit, material and work zero are set.`,
-      )
+      ))
     )
       return;
     busy = true;
@@ -127,9 +128,9 @@
   async function resumeSaved() {
     if (!saved || !canRun) return;
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Resume ${saved.name} at line ${saved.acked}/${saved.total}? The router will move from the current position.`,
-      )
+      ))
     )
       return;
     busy = true;
@@ -149,11 +150,12 @@
   const stop = () => invoke("stream_stop");
   const sdHold = () => invoke("send_realtime", { byte: 0x21 });
   const sdResume = () => invoke("send_realtime", { byte: 0x7e });
-  function sdStop() {
+  async function sdStop() {
     if (
-      !window.confirm(
+      !(await confirmDialog(
         "Abort the SD job? This soft-resets the machine (Ctrl-X) and ends the cut. It will go into Alarm — home or unlock afterward.",
-      )
+        { danger: true },
+      ))
     )
       return;
     invoke("send_realtime", { byte: 0x18 });
