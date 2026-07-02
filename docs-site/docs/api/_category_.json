@@ -1,0 +1,8 @@
+{
+  "label": "API Reference",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "The machine control API: gRPC, HTTP/JSON, and MCP, all backed by the same MaslowService."
+  }
+}

@@ -74,6 +74,24 @@ pub fn service(svc: Arc<MaslowService>) -> StreamableHttpService<McpServer, Loca
     )
 }
 
+/// Every domain's tool router, kept separate (rather than combined like
+/// `McpServer::new` does) and named, for a caller that wants per-domain
+/// grouping. Currently only `lib.rs`'s `mcp_tools_by_domain` (in turn used
+/// only by `bin/gen_docs`, the docs-site generator) needs this; the running
+/// server still combines all five into one flat router via `McpServer::new`,
+/// unaffected by this function's existence. `mcp` itself stays a private
+/// module (see `lib.rs`), so this being `pub` does not add anything to this
+/// crate's public API.
+pub fn tool_routers_by_domain() -> Vec<(&'static str, ToolRouter<McpServer>)> {
+    vec![
+        ("machine", McpServer::tool_router_machine()),
+        ("job", McpServer::tool_router_job()),
+        ("config", McpServer::tool_router_config()),
+        ("files", McpServer::tool_router_files()),
+        ("calibration", McpServer::tool_router_calibration()),
+    ]
+}
+
 /// A plain-text success result carrying no payload, for action tools whose
 /// only interesting outcome is "it worked" (matches the HTTP/gRPC layers'
 /// empty response messages, e.g. `JogResponse {}`).
