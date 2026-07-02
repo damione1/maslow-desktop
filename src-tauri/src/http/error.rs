@@ -16,6 +16,7 @@ enum ErrorKind {
     FailedPrecondition,
     DeadlineExceeded,
     Internal,
+    Unauthorized,
 }
 
 #[derive(Debug)]
@@ -51,6 +52,12 @@ impl ApiError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self { kind: ErrorKind::Internal, message: message.into() }
     }
+
+    /// Matches the gRPC layer's `Status::unauthenticated` treatment for a
+    /// missing or invalid API key.
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::Unauthorized, message: message.into() }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -61,6 +68,7 @@ impl IntoResponse for ApiError {
             ErrorKind::FailedPrecondition => StatusCode::PRECONDITION_FAILED,
             ErrorKind::DeadlineExceeded => StatusCode::GATEWAY_TIMEOUT,
             ErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
         };
         (status, Json(ErrorBody { error: self.message })).into_response()
     }

@@ -1,3 +1,6 @@
+mod api_server;
+mod api_settings;
+mod auth;
 mod calibration;
 mod connection;
 mod fluidnc;
@@ -24,8 +27,12 @@ pub fn run() {
         .setup(|app| {
             let svc = Arc::new(MaslowService::new(app.handle().clone()));
             app.manage(svc.clone());
-            grpc::spawn_server(svc.clone());
-            http::spawn_server(svc);
+            if svc.api_settings.read().unwrap().enabled {
+                let svc = svc.clone();
+                tauri::async_runtime::spawn(async move {
+                    svc.start_api_servers().await;
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -49,6 +56,9 @@ pub fn run() {
             connection::stream_resume,
             connection::stream_stop,
             connection::stream_saved,
+            api_settings::get_api_settings,
+            api_settings::set_api_enabled,
+            api_settings::regenerate_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

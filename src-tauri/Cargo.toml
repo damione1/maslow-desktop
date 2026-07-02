@@ -38,4 +38,6 @@ pbjson-types = "0.7"
 axum = "0.7"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace"] }
+sha2 = "0.10"
+subtle = "2"
 

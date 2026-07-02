@@ -37,16 +37,21 @@ pub struct MaslowService {
     pub app: AppHandle,
     pub snapshot: crate::service::snapshot::SharedSnapshot,
     pub events: tokio::sync::broadcast::Sender<crate::service::snapshot::MachineEvent>,
+    pub api_settings: std::sync::Arc<std::sync::RwLock<crate::api_settings::ApiSettings>>,
+    pub api_server: crate::api_server::ApiServerHandle,
 }
 
 impl MaslowService {
     pub fn new(app: AppHandle) -> Self {
         let (events, _rx) = tokio::sync::broadcast::channel(256);
+        let api_settings = crate::api_settings::read_settings(&app);
         Self {
             conn: ConnState::default(),
             app,
             snapshot: std::sync::Arc::new(std::sync::RwLock::new(Default::default())),
             events,
+            api_settings: std::sync::Arc::new(std::sync::RwLock::new(api_settings)),
+            api_server: crate::api_server::ApiServerHandle::new(),
         }
     }
 
