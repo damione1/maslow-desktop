@@ -2,6 +2,7 @@ mod calibration;
 mod connection;
 mod fluidnc;
 mod grbl;
+mod grpc;
 mod http_api;
 mod maslow;
 #[allow(clippy::all)]
@@ -20,7 +21,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            app.manage(Arc::new(MaslowService::new(app.handle().clone())));
+            let svc = Arc::new(MaslowService::new(app.handle().clone()));
+            app.manage(svc.clone());
+            grpc::spawn_server(svc);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
