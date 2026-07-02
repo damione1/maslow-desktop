@@ -9,6 +9,8 @@
     anchors,
   } from "$lib/stores/maslow";
   import { CalState, isReadyToCut, isResumablePreCut } from "$lib/stores/calState";
+  import { connection, fwVersion } from "$lib/stores/connection";
+  import { supportsFullCalibration } from "$lib/stores/firmware";
 
   // Guided layer on top of the contextual MaslowPanel. The firmware owns the
   // calibration state machine, so prerequisites/enablement come straight from
@@ -119,6 +121,10 @@
   const calib = $derived($anchors);
   const calibrated = $derived(calib?.calibrated ?? false);
 
+  // This app doesn't implement the v1.21 `$ACKCAL` recompute handshake, so Calibrate
+  // is gated off below that firmware version. Unknown versions aren't punished.
+  const calibrationSupported = $derived(supportsFullCalibration($fwVersion));
+
   // Daily "resume" path: the machine booted with calibration intact and is in a
   // stable pre-cut state. From EXTENDEDOUT(4) we can apply tension straight to
   // READY_TO_CUT; from RETRACTED(2) we extend first, then apply tension.
@@ -190,6 +196,7 @@
   function canDo(s: Step): boolean {
     if (!connected || s.policy == null || !(ap?.[s.policy] ?? false)) return false;
     if (s.key === "extend" && !zLowered) return false;
+    if (s.key === "calibrate" && !calibrationSupported) return false;
     return true;
   }
 
@@ -200,6 +207,8 @@
     if (!connected) return "Not connected.";
     if (s.key === "extend" && !zLowered)
       return "Confirm Z is lowered all the way down first.";
+    if (s.key === "calibrate" && !calibrationSupported)
+      return `Full calibration on firmware v${$fwVersion} requires the embedded web UI at http://${$connection.host}. This app supports calibration from firmware v1.22 onward, everything else in this app works normally.`;
     if (canDo(s)) return null;
     if (s.key === "takeSlack" || s.key === "calibrate") {
       if (code === CalState.Extending)

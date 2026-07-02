@@ -108,6 +108,16 @@ impl CalState {
 
     /// True while the machine is actively performing a transitional operation;
     /// only Retract / Stop / E-Stop are offered then.
+    ///
+    /// Treating `CalibrationComputing` (state 9) as busy/Retract-only is a deliberate
+    /// simplification, not a port of the firmware's raw transition graph for that state.
+    /// On v1.22+ firmware never enters state 9 in normal operation (anchor recompute moved
+    /// on-device). On v1.21, the firmware does enter it and waits there for the client to
+    /// send `$ACKCAL` with recomputed anchors; this app intentionally does not implement
+    /// that handshake, so it has nothing useful to do in state 9 beyond offering recovery.
+    /// The frontend gates the Calibrate action itself by firmware version (see
+    /// `supportsFullCalibration` in `src/lib/stores/firmware.ts`), so state 9 should never
+    /// be reached through this app at all; this is a fallback for the case it somehow is.
     pub fn is_busy(self) -> bool {
         use CalState::*;
         matches!(

@@ -47,7 +47,7 @@ Prebuilt installers are on the [**Releases**](https://github.com/damione1/maslow
 
 You'll need a Maslow running **FluidNC** reachable on your network (by `maslow.local` or its IP).
 
-> **Firmware compatibility:** tested against the Maslow build of **FluidNC v1.21 to v1.22**. Connecting to a firmware outside that range still works, but the app shows an "untested firmware" warning and some behaviour may differ. Within the range it degrades gracefully: a few options (apply-tension limiting) require firmware **v1.22 or newer** and are simply hidden or ignored on older builds.
+> **Firmware compatibility:** tested against the Maslow build of **FluidNC v1.21 to v1.22**. Connecting to a firmware outside that range still works, but the app shows an "untested firmware" warning and some behaviour may differ. Within the range it degrades gracefully: a few options (apply-tension limiting) require firmware **v1.22 or newer** and are simply hidden or ignored on older builds. **Full calibration specifically requires firmware v1.22 or newer**: v1.21 relies on a client-side recompute handshake this app doesn't implement, so the wizard's Calibrate step is disabled on v1.21 with a message pointing to the firmware's embedded web UI for that one operation. Everything else in the app, including daily resume and job streaming, works normally on v1.21.
 
 ### Prerequisites
 
