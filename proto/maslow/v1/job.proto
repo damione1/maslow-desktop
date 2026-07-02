@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package maslow.v1;
+
+// Live state of the active (or most recently active) job. "jobs/current" is
+// a singleton resource: there is at most one job streaming at a time.
+message Job {
+  // "running" | "paused" | "interrupted" | "done" | "error" | "idle"
+  string state = 1;
+  string path = 2;
+  string name = 3;
+  uint64 sent = 4;
+  uint64 acked = 5;
+  uint64 total = 6;
+  uint64 errors = 7;
+}
+
+// An on-disk record of a job interrupted by a disconnect or app restart,
+// resumable via StartJob with the same path and this record's `acked` as
+// the start index.
+message SavedJob {
+  string path = 1;
+  string name = 2;
+  uint64 total = 3;
+  uint64 acked = 4;
+  string state = 5;
+  uint64 updated_at = 6;
+}
+
+message GetJobRequest {
+  // "jobs/current"
+  string name = 1;
+}
+
+message GetSavedJobRequest {}
+
+message GetSavedJobResponse {
+  // Unset when there is no resumable job.
+  optional SavedJob saved_job = 1;
+}
+
+message StartJobRequest {
+  string path = 1;
+  uint64 start_index = 2;
+}
+
+message StartJobResponse {
+  uint64 total = 1;
+}
+
+message PauseJobRequest {}
+message ResumeJobRequest {}
+message StopJobRequest {}
+
+message WatchJobProgressRequest {}
+
+// Kept as its own streaming RPC, separate from MachineService's
+// WatchMachineEvents: job progress fires at high frequency while a job runs,
+// and most telemetry-only consumers don't want it interleaved with the rest
+// of the machine event stream.
+service JobService {
+  rpc GetJob(GetJobRequest) returns (Job);
+  rpc GetSavedJob(GetSavedJobRequest) returns (GetSavedJobResponse);
+  rpc StartJob(StartJobRequest) returns (StartJobResponse);
+  rpc PauseJob(PauseJobRequest) returns (Job);
+  rpc ResumeJob(ResumeJobRequest) returns (Job);
+  rpc StopJob(StopJobRequest) returns (Job);
+  rpc WatchJobProgress(WatchJobProgressRequest) returns (stream Job);
+}
