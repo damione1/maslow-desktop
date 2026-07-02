@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package maslow.v1;
+
+// One line segment of a parsed G-code toolpath (a plan view, not a
+// simulation: Z and feed rate are ignored).
+message Segment {
+  float x0 = 1;
+  float y0 = 2;
+  float x1 = 3;
+  float y1 = 4;
+  // True for a G0 rapid, false for a G1/G2/G3 cutting move.
+  bool rapid = 5;
+  // Index of the source line, so a caller can highlight cut-so-far vs
+  // remaining against live job progress.
+  uint32 line = 6;
+}
+
+message Toolpath {
+  repeated Segment segments = 1;
+  float min_x = 2;
+  float min_y = 3;
+  float max_x = 4;
+  float max_y = 5;
+  // False when the program produced no motion (empty bounding box).
+  bool has_bounds = 6;
+}
+
+// One entry of an SD card directory listing. Field set may be refined once
+// the underlying firmware JSON (currently passed through largely untyped)
+// is parsed strictly rather than forwarded as-is.
+message File {
+  // "files/{path}", where path is the SD-absolute path including slashes.
+  string name = 1;
+  uint64 size_bytes = 2;
+  bool is_directory = 3;
+}
+
+message ListFilesRequest {
+  // SD directory path, e.g. "/" or "/jobs".
+  string parent = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListFilesResponse {
+  repeated File files = 1;
+  string next_page_token = 2;
+}
+
+message DeleteFileRequest {
+  // "files/{path}"
+  string name = 1;
+}
+
+message UploadFileRequest {
+  // SD directory to upload into.
+  string dir = 1;
+  // Path to the file on the machine running this server (not caller-streamed
+  // bytes: this mirrors the existing local-file-path upload semantics).
+  string local_path = 2;
+}
+
+message UploadFileResponse {
+  // "files/{path}" of the uploaded file.
+  string name = 1;
+}
+
+message ParseSdToolpathRequest {
+  // "files/{path}"
+  string name = 1;
+}
+
+message LoadLocalToolpathRequest {
+  // Path to a G-code file on the machine running this server.
+  string local_path = 1;
+}
+
+service FilesService {
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+  rpc UploadFile(UploadFileRequest) returns (UploadFileResponse);
+  // Download an SD file and parse it into a 2D toolpath preview, without
+  // running it.
+  rpc ParseSdToolpath(ParseSdToolpathRequest) returns (Toolpath);
+  // Parse a local G-code file into a 2D toolpath preview.
+  rpc LoadLocalToolpath(LoadLocalToolpathRequest) returns (Toolpath);
+}
+
+message DeleteFileResponse {}

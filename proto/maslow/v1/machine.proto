@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package maslow.v1;
+
+import "maslow/v1/common.proto";
+import "maslow/v1/calibration.proto";
+import "maslow/v1/config.proto";
+
+// One update from the machine, mirroring one of the existing Tauri events
+// 1:1. WatchMachineEvents streams these; JobProgress is deliberately not
+// included here (see job.proto's WatchJobProgress) so a telemetry-only
+// consumer is not forced to also receive high-frequency job progress.
+message MachineEvent {
+  oneof payload {
+    WsState ws_state = 1;
+    string ws_error = 2;
+    string grbl_line = 3;
+    MachineStatus status = 4;
+    string ws_control = 5;
+    ActionPolicy action_policy = 6;
+    Anchors anchors = 7;
+    MaslowInfo maslow_info = 8;
+    StatePolicy maslow_state = 9;
+    Waypoint waypoint = 10;
+    Discord discord = 11;
+    MeasurementList cal_measurements = 12;
+    FirmwareFit cal_firmware_fit = 13;
+    AnchorParams cal_firmware_anchors = 14;
+    bool cal_complete = 15;
+    ConfigEntryList config_dump = 16;
+    string config_dump_error = 17;
+  }
+}
+
+// proto3 cannot use `repeated` directly inside a `oneof` field, so a
+// dump's entries are wrapped in this single-field message instead.
+message ConfigEntryList {
+  repeated ConfigEntry entries = 1;
+}
+
+// Wrapper for the same reason as ConfigEntryList above.
+message MeasurementList {
+  repeated Measurement measurements = 1;
+}
+
+message GetMachineStatusRequest {
+  // "machines/default"
+  string name = 1;
+}
+
+message GetActionPolicyRequest {
+  string name = 1;
+}
+
+message GetSnapshotRequest {
+  string name = 1;
+}
+
+// Aggregate of the machine's current known state in one round trip, mainly
+// for a caller (an LLM tool call, in particular) that wants full context
+// without issuing several requests. Any field may be unset if that piece of
+// telemetry has not been observed yet on the current connection.
+message Snapshot {
+  WsState ws_state = 1;
+  optional MachineStatus status = 2;
+  optional ActionPolicy action_policy = 3;
+  optional MaslowInfo maslow_info = 4;
+  optional StatePolicy maslow_state = 5;
+  optional Anchors anchors = 6;
+  repeated ConfigEntry config_entries = 7;
+}
+
+message ConnectRequest {
+  string host = 1;
+}
+message ConnectResponse {}
+
+message DisconnectRequest {}
+message DisconnectResponse {}
+
+// Structured jog request, translated into the appropriate firmware jog
+// command. Distances in mm, relative to the current position.
+message JogRequest {
+  double dx = 1;
+  double dy = 2;
+  double dz = 3;
+  double feed = 4;
+}
+message JogResponse {}
+
+message HomeRequest {}
+message HomeResponse {}
+message UnlockRequest {}
+message UnlockResponse {}
+message ResetAlarmRequest {}
+message ResetAlarmResponse {}
+message HoldRequest {}
+message HoldResponse {}
+message ResumeRequest {}
+message ResumeResponse {}
+
+message ZeroRequest {
+  // Axis letters to zero, e.g. ["X", "Y"]. Empty means all axes.
+  repeated string axes = 1;
+}
+message ZeroResponse {}
+
+message RetractRequest {}
+message RetractResponse {}
+message ExtendRequest {}
+message ExtendResponse {}
+message TakeSlackRequest {}
+message TakeSlackResponse {}
+message ComplyRequest {}
+message ComplyResponse {}
+message StopRequest {}
+message StopResponse {}
+message EStopRequest {}
+message EStopResponse {}
+
+message SendLineRequest {
+  string line = 1;
+}
+message SendLineResponse {}
+
+message SendRealtimeRequest {
+  uint32 byte = 1;
+}
+message SendRealtimeResponse {}
+
+message WriteSettingRequest {
+  string path = 1;
+  string value = 2;
+}
+message WriteSettingResponse {}
+
+message SaveConfigRequest {}
+message SaveConfigResponse {}
+
+message PingMachineRequest {
+  string host = 1;
+}
+message PingMachineResponse {
+  bool reachable = 1;
+  uint32 status = 2;
+  string info = 3;
+}
+
+message GetFirmwareVersionRequest {
+  string host = 1;
+}
+message GetFirmwareVersionResponse {
+  optional string version = 1;
+}
+
+message WatchMachineEventsRequest {
+  string name = 1;
+}
+
+// The machine is modeled as a singleton resource ("machines/default"): there
+// is one physical machine per connection, so no List/Create/Delete methods.
+// Operations that act on it (jog, home, e-stop, ...) are AIP-136 custom
+// methods rather than forced into Create/Update/Delete semantics.
+service MachineService {
+  rpc GetMachineStatus(GetMachineStatusRequest) returns (MachineStatus);
+  rpc GetActionPolicy(GetActionPolicyRequest) returns (ActionPolicy);
+  rpc GetSnapshot(GetSnapshotRequest) returns (Snapshot);
+
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+
+  rpc Jog(JogRequest) returns (JogResponse);
+  rpc Home(HomeRequest) returns (HomeResponse);
+  rpc Unlock(UnlockRequest) returns (UnlockResponse);
+  rpc ResetAlarm(ResetAlarmRequest) returns (ResetAlarmResponse);
+  rpc Hold(HoldRequest) returns (HoldResponse);
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
+  rpc Zero(ZeroRequest) returns (ZeroResponse);
+  rpc Retract(RetractRequest) returns (RetractResponse);
+  rpc Extend(ExtendRequest) returns (ExtendResponse);
+  rpc TakeSlack(TakeSlackRequest) returns (TakeSlackResponse);
+  rpc Comply(ComplyRequest) returns (ComplyResponse);
+  rpc Stop(StopRequest) returns (StopResponse);
+  rpc EStop(EStopRequest) returns (EStopResponse);
+
+  rpc SendLine(SendLineRequest) returns (SendLineResponse);
+  rpc SendRealtime(SendRealtimeRequest) returns (SendRealtimeResponse);
+  rpc WriteSetting(WriteSettingRequest) returns (WriteSettingResponse);
+  rpc SaveConfig(SaveConfigRequest) returns (SaveConfigResponse);
+
+  rpc PingMachine(PingMachineRequest) returns (PingMachineResponse);
+  rpc GetFirmwareVersion(GetFirmwareVersionRequest) returns (GetFirmwareVersionResponse);
+
+  rpc WatchMachineEvents(WatchMachineEventsRequest) returns (stream MachineEvent);
+}

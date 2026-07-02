@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package maslow.v1;
+
+// Best-effort value type, letting a caller pick an appropriate input widget
+// or parser.
+enum ConfigKind {
+  CONFIG_KIND_UNSPECIFIED = 0;
+  CONFIG_KIND_BOOL = 1;
+  CONFIG_KIND_INT = 2;
+  CONFIG_KIND_FLOAT = 3;
+  CONFIG_KIND_TEXT = 4;
+}
+
+// One editable leaf of the FluidNC config tree. `path` is the `/`-joined key
+// path a write expects (e.g. "axes/x/steps_per_mm", "Maslow_Scale_X"); the
+// resource name for Get/List is "configEntries/{path}".
+message ConfigEntry {
+  string path = 1;
+  string value = 2;
+  ConfigKind kind = 3;
+}
+
+message ListConfigEntriesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  // When true, request a fresh dump from the machine ("$CD") instead of
+  // serving the last cached one.
+  bool force_refresh = 3;
+}
+
+message ListConfigEntriesResponse {
+  repeated ConfigEntry config_entries = 1;
+  string next_page_token = 2;
+}
+
+message GetConfigEntryRequest {
+  // "configEntries/{path}"
+  string name = 1;
+}
+
+message UpdateConfigEntryRequest {
+  ConfigEntry config_entry = 1;
+  // Whether to also persist the change to flash ("$CO") after writing it.
+  bool save = 2;
+}
+
+service ConfigService {
+  rpc ListConfigEntries(ListConfigEntriesRequest) returns (ListConfigEntriesResponse);
+  rpc GetConfigEntry(GetConfigEntryRequest) returns (ConfigEntry);
+  rpc UpdateConfigEntry(UpdateConfigEntryRequest) returns (ConfigEntry);
+}

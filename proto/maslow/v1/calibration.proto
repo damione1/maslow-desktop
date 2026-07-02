@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package maslow.v1;
+
+import "maslow/v1/common.proto";
+
+// One belt-length measurement at a calibration waypoint (mm, XY plane).
+message Measurement {
+  double tl = 1;
+  double tr = 2;
+  double bl = 3;
+  double br = 4;
+}
+
+// The reduced 5-parameter anchor estimate the solver optimises over. BL is
+// fixed at the origin and BR's Y is fixed at 0, so they are not parameters.
+message AnchorParams {
+  double tl_x = 1;
+  double tl_y = 2;
+  double tr_x = 3;
+  double tr_y = 4;
+  double br_x = 5;
+}
+
+// Estimated sled position for a single measurement (mm, XY plane).
+message Sled {
+  double x = 1;
+  double y = 2;
+}
+
+// Quality metrics for a solved fit.
+message Fitness {
+  // sqrt(SSR / 4N), overall belt-length error, mm.
+  double rms = 1;
+  // max|residual|, worst single belt-length error, mm.
+  double max_residual = 2;
+  // Per-anchor RMS [tl, tr, bl, br], mm.
+  repeated double per_anchor = 3;
+  // True if the solver converged within the iteration cap on at least one
+  // attempt.
+  bool converged = 4;
+}
+
+// Full result of a solve: candidate anchors + fitness + per-measurement
+// detail. `ok` reflects the firmware's own fitness gates; `gate_error`
+// explains a failure when `ok` is false.
+message SolveResult {
+  string solver = 1;
+  bool ok = 2;
+  string gate_error = 3;
+  Anchors anchors = 4;
+  AnchorParams params = 5;
+  Fitness fitness = 6;
+  repeated Sled sled = 7;
+  // Per-measurement residuals [tl, tr, bl, br] of the best params, mm. Each
+  // entry corresponds by index to `kept_indices`.
+  repeated ResidualRow residuals = 8;
+  // Original measurement indices the solve actually used, in order. Equal to
+  // 0..n unless the caller excluded waypoints, letting a caller map `sled`/
+  // `residuals` back to the original waypoint numbers.
+  repeated uint32 kept_indices = 9;
+}
+
+// One residual row: [tl, tr, bl, br] belt-length error, mm.
+message ResidualRow {
+  repeated double values = 1;
+}
+
+// Fitness numbers the firmware itself logs after a recompute, used as a
+// comparison point against the client-side solve.
+message FirmwareFit {
+  double rms = 1;
+  double max_residual = 2;
+  repeated double per_anchor = 3;
+  bool converged = 4;
+}
+
+message SolveCalibrationRequest {
+  repeated Measurement measurements = 1;
+  // Starting guess. If unset, the solver falls back to the firmware default
+  // frame (or the current config anchors, when available to the caller).
+  optional AnchorParams initial = 2;
+  // Zero-based measurement indices to exclude from the solve (what-if
+  // waypoint exclusion), without touching the machine.
+  repeated uint32 exclude = 3;
+  // Solver identifier; currently only "levenberg-marquardt" is implemented.
+  string solver = 4;
+}
+
+// Calibration is modeled as a custom method on a virtual collection: there is
+// no persisted "calibration" resource, this is a stateless computation.
+service CalibrationService {
+  rpc SolveCalibration(SolveCalibrationRequest) returns (SolveResult);
+}

@@ -4,6 +4,8 @@ mod fluidnc;
 mod grbl;
 mod http_api;
 mod maslow;
+#[allow(clippy::all)]
+mod proto;
 mod service;
 mod streaming;
 mod toolpath;

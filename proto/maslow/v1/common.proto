@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package maslow.v1;
+
+// Connection state of the live WebSocket to the machine. Only the states the
+// connection loop actually reports today; nothing currently reports a
+// transient "connecting" state.
+enum WsState {
+  WS_STATE_UNSPECIFIED = 0;
+  DISCONNECTED = 1;
+  CONNECTED = 2;
+}
+
+// A parsed GRBL/FluidNC realtime status report ("<...>").
+message MachineStatus {
+  // e.g. "Idle", "Run", "Hold", "Alarm", "Jog", "Home".
+  string state = 1;
+  optional int32 substate = 2;
+  // Machine position (absolute). Axis count varies; Maslow uses X,Y,Z.
+  repeated float mpos = 3;
+  // Work position (machine position minus work offset).
+  repeated float wpos = 4;
+  // Work coordinate offset, when reported.
+  repeated float wco = 5;
+  float feed = 6;
+  float spindle = 7;
+  // Planner buffer blocks / RX serial bytes free.
+  optional int32 buffer_blocks = 8;
+  optional int32 buffer_bytes = 9;
+  // Feed / rapid / spindle overrides in percent.
+  repeated int32 ov = 10;
+}
+
+// Which machine actions are currently allowed, reconciled from FluidNC
+// state, Maslow calibration state, and whether a job is streaming.
+message ActionPolicy {
+  bool jog = 1;
+  bool home = 2;
+  bool unlock = 3;
+  bool zero = 4;
+  bool run = 5;
+  bool hold = 6;
+  bool resume = 7;
+  bool reset = 8;
+  bool retract = 9;
+  bool extend = 10;
+  bool take_slack = 11;
+  bool calibrate = 12;
+  bool comply = 13;
+  bool stop = 14;
+  bool estop = 15;
+}
+
+// Maslow belt-tension / homed telemetry ("$Maslow/getInfo").
+message MaslowInfo {
+  bool homed = 1;
+  bool calibration_in_progress = 2;
+  // Belt lengths (mm) for each arm. Unset when the firmware reported a
+  // NaN/Inf reading for that arm.
+  optional float tl = 3;
+  optional float tr = 4;
+  optional float br = 5;
+  optional float bl = 6;
+  // Belt position errors (mm) for each arm. Unset when the firmware
+  // reported a NaN/Inf reading for that arm.
+  optional float etl = 7;
+  optional float etr = 8;
+  optional float ebr = 9;
+  optional float ebl = 10;
+  bool extended = 11;
+}
+
+// Frame anchor coordinates (mm), as stored in the firmware config.
+message Anchors {
+  float tl_x = 1;
+  float tl_y = 2;
+  float tr_x = 3;
+  float tr_y = 4;
+  float bl_x = 5;
+  float bl_y = 6;
+  float br_x = 7;
+  float br_y = 8;
+  // True when the geometry is non-degenerate and passes the firmware's own
+  // basic sanity checks, i.e. the anchors are usable as a frame definition.
+  bool valid = 9;
+  // True when the anchors are valid AND differ from the firmware's compiled
+  // defaults, i.e. a calibration actually ran and overwrote them.
+  bool calibrated = 10;
+}
+
+// A calibration grid waypoint reported by the firmware.
+message Waypoint {
+  int32 n = 1;
+  float x = 2;
+  float y = 3;
+}
+
+// The Maslow calibration state machine's current label and busy flag for the
+// observed state. The set of allowed action ids behind this state is not
+// exposed here; callers should use ActionPolicy, the already-reconciled
+// allow-list (FluidNC state + calibration state + job state combined).
+message StatePolicy {
+  int32 code = 1;
+  string label = 2;
+  // True while the machine is actively performing an operation (transitional
+  // state).
+  bool busy = 3;
+}
+
+// A calibration state report that contradicted the expected transition
+// graph (either suppressed as a straggler, or accepted as the machine
+// prevailing over our tracked state).
+message Discord {
+  // "straggler" (suppressed) or "accepted" (state updated to match).
+  string kind = 1;
+  int32 from = 2;
+  int32 to = 3;
+  string from_label = 4;
+  string to_label = 5;
+}
