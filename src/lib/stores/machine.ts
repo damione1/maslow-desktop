@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import { listen } from "@tauri-apps/api/event";
+import { annotateErrorLine } from "$lib/stores/grblErrors";
 
 export interface MachineStatus {
   state: string;
@@ -42,8 +43,12 @@ export async function initMachineListeners(): Promise<void> {
     if (line.startsWith("<")) return;
     // Bare `ok` acks are noise (telemetry polling emits them ~every 1.5s).
     if (line === "ok") return;
+    // A bare `error:N` (from a poll or another out-of-band command, not
+    // necessarily the job) is meaningless without looking up the code, so
+    // annotate it with the firmware's own message for it.
+    const annotated = annotateErrorLine(line);
     consoleLines.update((lines) => {
-      lines.push(line);
+      lines.push(annotated);
       return lines.length > MAX_CONSOLE_LINES ? lines.slice(-MAX_CONSOLE_LINES) : lines;
     });
   });
