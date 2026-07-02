@@ -14,16 +14,38 @@ pub mod files;
 pub mod job;
 pub mod machine;
 
+use crate::http::error::ApiError;
 use crate::service::machine::MaslowService;
+use axum::extract::{Request, State};
+use axum::http::header::AUTHORIZATION;
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::Router;
+use std::future::Future;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
-/// Loopback-only, hardcoded port (gRPC's is 50051; this is a separate port,
-/// not a proxy in front of it). There is no authentication yet, so the
-/// server must not be reachable from the network; revisit once auth and an
-/// enable/disable toggle land.
-const HTTP_ADDR: &str = "127.0.0.1:8642";
+/// Rejects any request without a valid `Authorization: Bearer <key>` header,
+/// checked against `svc.api_settings` live on every request (not a value
+/// captured once at server-spawn time), so a key regenerated or a toggle
+/// flipped while the server is running takes effect on the very next
+/// request.
+async fn auth_middleware(State(svc): State<Arc<MaslowService>>, req: Request, next: Next) -> Response {
+    let key = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let authorized = key.is_some_and(|k| {
+        let settings = svc.api_settings.read().unwrap();
+        crate::auth::check_key(&settings, k)
+    });
+    if authorized {
+        next.run(req).await
+    } else {
+        ApiError::unauthorized("missing or invalid API key").into_response()
+    }
+}
 
 fn build_router(svc: Arc<MaslowService>) -> Router {
     Router::new()
@@ -33,24 +55,28 @@ fn build_router(svc: Arc<MaslowService>) -> Router {
         .merge(files::router())
         .merge(calibration::router())
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(svc.clone(), auth_middleware))
         .with_state(svc)
 }
 
-/// Start the HTTP gateway on a background Tauri task. Runs for the life of
-/// the app; there is no shutdown handle yet, so the OS reclaims the socket on
-/// exit (matches the gRPC server's current state).
-pub fn spawn_server(svc: Arc<MaslowService>) {
+/// Start the HTTP gateway on a background Tauri task, listening on
+/// `svc.api_settings`'s current `port_http` (loopback only). Shuts down
+/// gracefully when `shutdown` resolves, which lets a settings change
+/// (enable/disable, key regeneration) restart the server on demand rather
+/// than only at app exit.
+pub fn spawn_server(svc: Arc<MaslowService>, shutdown: impl Future<Output = ()> + Send + 'static) {
     tauri::async_runtime::spawn(async move {
+        let port = svc.api_settings.read().unwrap().port_http;
         let app = build_router(svc);
-        let listener = match tokio::net::TcpListener::bind(HTTP_ADDR).await {
+        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
             Ok(listener) => listener,
             Err(e) => {
-                eprintln!("HTTP gateway failed to bind {HTTP_ADDR}: {e}");
+                eprintln!("HTTP gateway failed to bind 127.0.0.1:{port}: {e}");
                 return;
             }
         };
-        eprintln!("HTTP gateway listening on {HTTP_ADDR}");
-        if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("HTTP gateway listening on 127.0.0.1:{port}");
+        if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown).await {
             eprintln!("HTTP gateway exited with error: {e}");
         }
     });
